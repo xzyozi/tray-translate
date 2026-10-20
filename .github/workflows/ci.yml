@@ -21,19 +21,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
-      CMAKE_C_COMPILER_LAUNCHER: "sccache"
-      CMAKE_CXX_COMPILER_LAUNCHER: "sccache"
+        include:
+          - os: ubuntu-latest
+            sccache: true
+          - os: windows-latest
+            sccache: false
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Run sccache-action
+        if: matrix.sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Configure sccache environment
+        if: matrix.sccache
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -69,6 +78,6 @@ jobs:
           echo "Add .github/ci.sh or a Makefile target named ci to enable checks."
 
       - name: Print sccache statistics
-        if: always()
+        if: always() && matrix.sccache
         shell: bash
         run: sccache --show-stats
