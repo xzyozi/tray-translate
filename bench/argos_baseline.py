@@ -10,9 +10,11 @@ CPU のみで、速度・メモリ・翻訳結果を計測して JSON に保存�
 from __future__ import annotations
 
 import argparse
+import cProfile
 import json
 import os
 import platform
+import pstats
 import statistics
 import sys
 import time
@@ -103,6 +105,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     timings: dict[str, list[float]] = {s["id"]: [] for s in sentences}
     outputs: dict[str, str] = {}
+    profiler = cProfile.Profile() if args.profile else None
+    if profiler is not None:
+        profiler.enable()
     for round_no in range(args.repeat):
         log(f"round {round_no + 1}/{args.repeat}")
         for sentence in sentences:
@@ -111,6 +116,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 sentence[args.from_code], args.from_code, args.to_code
             )
             timings[sentence["id"]].append(time.perf_counter() - start)
+    if profiler is not None:
+        profiler.disable()
+        # どこで時間を使っているか(文分割・推論など)を累積時間順に標準エラーへ出す
+        pstats.Stats(profiler, stream=sys.stderr).sort_stats("cumulative").print_stats(25)
 
     results: list[dict[str, Any]] = [
         {
@@ -166,6 +175,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=None, help="結果の保存先(既定: bench_<from>_<to>.json)")
     parser.add_argument("--repeat", type=int, default=5, help="全文を翻訳する周回の回数")
     parser.add_argument("--install", action="store_true", help="言語パッケージを取得してインストールする")
+    parser.add_argument("--profile", action="store_true", help="cProfile で時間の内訳を標準エラーに出す")
     args = parser.parse_args()
 
     output = args.output or Path(f"bench_{args.from_code}_{args.to_code}.json")
