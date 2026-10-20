@@ -18,7 +18,10 @@ dependencies = [
 [project.optional-dependencies]
 # Issue #4 の基準値計測用(検証専用。コア本体は依存しない)
 bench = [
-    "argostranslate==1.11.0"
+    "argostranslate==1.11.0",
+    # argostranslate -> stanza -> torch の依存で NVIDIA(CUDA)モジュールが入るのを避けるため、
+    # torch を直接依存に置き、下記 [tool.uv.sources] で CPU 版の索引に向ける
+    "torch"
 ]
 # 開発・テスト環境専用のパッケージ（共通デファクトスタンダード）
 dev = [
@@ -30,6 +33,15 @@ dev = [
 # 検証用途のみ。プロジェクト自体はビルド・インストールしない（依存のみ uv で管理）
 [tool.uv]
 package = false
+
+# CPU 専用の PyTorch 索引（NVIDIA モジュールを含まない）
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 # ==========================================
 # Linter & Formatter (Ruff)
