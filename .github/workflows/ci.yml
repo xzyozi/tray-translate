@@ -22,9 +22,18 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+      CMAKE_C_COMPILER_LAUNCHER: "sccache"
+      CMAKE_CXX_COMPILER_LAUNCHER: "sccache"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Run sccache-action
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -58,3 +67,8 @@ jobs:
         run: |
           echo "No project CI contract found; project-specific checks are skipped."
           echo "Add .github/ci.sh or a Makefile target named ci to enable checks."
+
+      - name: Print sccache statistics
+        if: always()
+        shell: bash
+        run: sccache --show-stats
