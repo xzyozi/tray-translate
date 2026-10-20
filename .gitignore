@@ -38,3 +38,6 @@ target/
 
 # Translation models (not stored in the repository)
 models/
+
+# Benchmark raw outputs (commit only curated results under docs/)
+bench_*.json
