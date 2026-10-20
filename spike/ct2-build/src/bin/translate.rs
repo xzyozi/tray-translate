@@ -72,6 +72,7 @@ fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let spm = args.package.join("sentencepiece.model");
+    eprintln!("loading model: {}", args.package.display());
     let load_start = Instant::now();
     let translator = Translator::with_tokenizer(
         args.package.join("model"),
@@ -79,6 +80,7 @@ fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         &Config::default(),
     )?;
     let load_sec = load_start.elapsed().as_secs_f64();
+    eprintln!("model loaded in {load_sec:.2}s");
 
     let translate = |text: &str| -> Result<String, Box<dyn std::error::Error>> {
         let results = translator.translate_batch(&[text], &options, None)?;
@@ -90,17 +92,20 @@ fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // 初回呼び出しの時間を別に計測する(Python 版の cold start に対応)
+    eprintln!("cold start translate");
     let first = source_of(&sentences[0])?;
     let start = Instant::now();
     translate(&first)?;
     let cold_start_sec = start.elapsed().as_secs_f64();
+    eprintln!("cold start done: {cold_start_sec:.2}s");
 
     // 直前と同じ入力が続かないよう、最後の文でならしてから全文を周回する(Python 版と同じ方式)
     translate(&source_of(&sentences[sentences.len() - 1])?)?;
 
     let mut timings: Vec<Vec<f64>> = vec![Vec::new(); sentences.len()];
     let mut outputs: Vec<String> = vec![String::new(); sentences.len()];
-    for _ in 0..args.repeat {
+    for round in 0..args.repeat {
+        eprintln!("round {}/{}", round + 1, args.repeat);
         for (i, s) in sentences.iter().enumerate() {
             let text = source_of(s)?;
             let start = Instant::now();
