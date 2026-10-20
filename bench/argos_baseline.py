@@ -81,6 +81,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     log("importing argostranslate.translate")
     import argostranslate.translate
 
+    if argostranslate.translate.get_translation_from_codes(args.from_code, args.to_code) is None:
+        raise SystemExit(
+            f"language package not installed: {args.from_code} -> {args.to_code}. "
+            "--install を付けて実行してください。"
+        )
+
     # 初回呼び出しにはモデルの読み込みが含まれるため、別に計測する
     log("cold start translate (モデル読み込みを含む)")
     first = sentences[0][args.from_code]
@@ -121,6 +127,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     medians = [r["median_sec"] for r in results]
     total_chars = sum(r["chars"] for r in results)
+    by_category: dict[str, dict[str, float]] = {}
+    for category in sorted({r["category"] for r in results}):
+        group = [r for r in results if r["category"] == category]
+        by_category[category] = {
+            "median_sec": statistics.median(r["median_sec"] for r in group),
+            "chars_per_sec": sum(r["chars"] for r in group) / sum(r["median_sec"] for r in group),
+        }
     return {
         "environment": {
             "os": platform.platform(),
@@ -139,6 +152,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "p95_sec": percentile(medians, 0.95),
             "chars_per_sec": total_chars / sum(medians),
             "peak_rss_mb": peak_rss_mb(),
+            "by_category": by_category,
         },
         "results": results,
     }
@@ -161,7 +175,9 @@ def main() -> int:
     summary = report["summary"]
     print(f"pair={report['pair']} cold_start={summary['cold_start_sec']:.2f}s median={summary['median_sec']:.3f}s")
     print(f"p95={summary['p95_sec']:.3f}s chars/s={summary['chars_per_sec']:.1f} peak_rss_mb={summary['peak_rss_mb']}")
-    print(f"saved: {output}")
+    for category, values in summary["by_category"].items():
+        print(f"  {category}: median={values['median_sec']:.3f}s chars/s={values['chars_per_sec']:.1f}")
+    print(f"cpu_count={report['environment']['cpu_count']} saved: {output}")
     return 0
 
 
