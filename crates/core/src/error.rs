@@ -12,6 +12,9 @@ pub enum CoreError {
     #[error("ZIP archive error: {0}")]
     Zip(#[from] zip::result::ZipError),
 
+    #[error("HTTP request error: {0}")]
+    Http(#[from] Box<ureq::Error>),
+
     #[error("CTranslate2 engine error: {0}")]
     Ct2(#[from] anyhow::Error),
 
@@ -24,8 +27,20 @@ pub enum CoreError {
     #[error("Standard data directory not found for this platform")]
     DataDirNotFound,
 
+    #[error("Package not found in index for: {0} -> {1}")]
+    PackageNotFound(String, String),
+
+    #[error("No valid download link found for package")]
+    NoDownloadLink,
+
     #[error("Unsupported language pair: {0} -> {1}")]
     UnsupportedLanguagePair(String, String),
+}
+
+impl From<ureq::Error> for CoreError {
+    fn from(err: ureq::Error) -> Self {
+        CoreError::Http(Box::new(err))
+    }
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;
