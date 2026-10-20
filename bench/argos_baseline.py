@@ -89,27 +89,35 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     cold_start_sec = time.perf_counter() - start
     log(f"cold start done: {cold_start_sec:.2f}s")
 
-    results: list[dict[str, Any]] = []
-    for sentence in sentences:
-        log(f"translating {sentence['id']}")
-        text = sentence[args.from_code]
-        timings: list[float] = []
-        translated = ""
-        for _ in range(args.repeat):
+    # Argos は直前の翻訳結果を段落単位でキャッシュする(CachedTranslation)。
+    # 同じ入力を連続して呼ぶとキャッシュに当たり計測が無意味になるため、
+    # 全文を順に翻訳する周回を繰り返し、直前と異なる入力が常に続くようにする。
+    # 周回の先頭が cold start の入力と連続しないよう、最後の文で一度ならしておく(計測しない)。
+    argostranslate.translate.translate(sentences[-1][args.from_code], args.from_code, args.to_code)
+
+    timings: dict[str, list[float]] = {s["id"]: [] for s in sentences}
+    outputs: dict[str, str] = {}
+    for round_no in range(args.repeat):
+        log(f"round {round_no + 1}/{args.repeat}")
+        for sentence in sentences:
             start = time.perf_counter()
-            translated = argostranslate.translate.translate(text, args.from_code, args.to_code)
-            timings.append(time.perf_counter() - start)
-        results.append(
-            {
-                "id": sentence["id"],
-                "category": sentence["category"],
-                "source": text,
-                "reference": sentence.get(args.to_code),
-                "output": translated,
-                "chars": len(text),
-                "median_sec": statistics.median(timings),
-            }
-        )
+            outputs[sentence["id"]] = argostranslate.translate.translate(
+                sentence[args.from_code], args.from_code, args.to_code
+            )
+            timings[sentence["id"]].append(time.perf_counter() - start)
+
+    results: list[dict[str, Any]] = [
+        {
+            "id": sentence["id"],
+            "category": sentence["category"],
+            "source": sentence[args.from_code],
+            "reference": sentence.get(args.to_code),
+            "output": outputs[sentence["id"]],
+            "chars": len(sentence[args.from_code]),
+            "median_sec": statistics.median(timings[sentence["id"]]),
+        }
+        for sentence in sentences
+    ]
 
     medians = [r["median_sec"] for r in results]
     total_chars = sum(r["chars"] for r in results)
@@ -142,7 +150,7 @@ def main() -> int:
     parser.add_argument("--to", dest="to_code", required=True, help="翻訳先の言語コード(例: ja)")
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="テスト文セットの JSON")
     parser.add_argument("--output", type=Path, default=None, help="結果の保存先(既定: bench_<from>_<to>.json)")
-    parser.add_argument("--repeat", type=int, default=5, help="1文あたりの繰り返し回数")
+    parser.add_argument("--repeat", type=int, default=5, help="全文を翻訳する周回の回数")
     parser.add_argument("--install", action="store_true", help="言語パッケージを取得してインストールする")
     args = parser.parse_args()
 
