@@ -26,6 +26,11 @@ os.environ["ARGOS_DEVICE_TYPE"] = "cpu"
 DEFAULT_INPUT = Path(__file__).resolve().parent.parent / "docs" / "testdata" / "sentences.json"
 
 
+def log(message: str) -> None:
+    """進捗を標準エラーに即時出力する(長い処理で止まって見えないようにする)。"""
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", file=sys.stderr, flush=True)
+
+
 def peak_rss_mb() -> float | None:
     """プロセスのピークメモリ(MB)を返す。Linux 以外では取得できないため None。"""
     try:
@@ -45,14 +50,20 @@ def package_version(name: str) -> str | None:
 
 def install_package(from_code: str, to_code: str) -> None:
     """言語パッケージを索引から取得してインストールする(ネットワークが必要)。"""
+    log("importing argostranslate.package (初回は数十秒かかることがある)")
     import argostranslate.package
 
+    log("updating package index (ネットワーク通信)")
     argostranslate.package.update_package_index()
     available = argostranslate.package.get_available_packages()
     package = next((p for p in available if p.from_code == from_code and p.to_code == to_code), None)
     if package is None:
         raise SystemExit(f"package not found: {from_code} -> {to_code}")
-    argostranslate.package.install_from_path(package.download())
+    log(f"downloading package {from_code}->{to_code} (数百MBのことがある)")
+    path = package.download()
+    log(f"installing package from {path}")
+    argostranslate.package.install_from_path(path)
+    log("package installed")
 
 
 def percentile(values: list[float], ratio: float) -> float:
@@ -67,16 +78,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.install:
         install_package(args.from_code, args.to_code)
 
+    log("importing argostranslate.translate")
     import argostranslate.translate
 
     # 初回呼び出しにはモデルの読み込みが含まれるため、別に計測する
+    log("cold start translate (モデル読み込みを含む)")
     first = sentences[0][args.from_code]
     start = time.perf_counter()
     argostranslate.translate.translate(first, args.from_code, args.to_code)
     cold_start_sec = time.perf_counter() - start
+    log(f"cold start done: {cold_start_sec:.2f}s")
 
     results: list[dict[str, Any]] = []
     for sentence in sentences:
+        log(f"translating {sentence['id']}")
         text = sentence[args.from_code]
         timings: list[float] = []
         translated = ""
