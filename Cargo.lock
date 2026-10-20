@@ -1047,6 +1047,7 @@ name = "tray-translate-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "tray-translate-core",
