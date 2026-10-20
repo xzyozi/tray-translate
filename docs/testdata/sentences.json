@@ -1,0 +1,90 @@
+{
+  "description": "Argos Translate 基準値計測用の固定テスト文セット(英日対訳)。参照訳は目視評価の目安であり、正解の訳ではない。",
+  "version": "1.0",
+  "sentences": [
+    {
+      "id": "short-01",
+      "category": "short",
+      "en": "Please save the file before closing.",
+      "ja": "閉じる前にファイルを保存してください。"
+    },
+    {
+      "id": "short-02",
+      "category": "short",
+      "en": "The meeting starts at nine.",
+      "ja": "会議は9時に始まります。"
+    },
+    {
+      "id": "short-03",
+      "category": "short",
+      "en": "Where is the nearest station?",
+      "ja": "最寄りの駅はどこですか。"
+    },
+    {
+      "id": "short-04",
+      "category": "short",
+      "en": "Thank you for your help.",
+      "ja": "ご協力ありがとうございます。"
+    },
+    {
+      "id": "normal-01",
+      "category": "normal",
+      "en": "The application runs in the background and translates the text you copy to the clipboard.",
+      "ja": "このアプリケーションはバックグラウンドで動作し、クリップボードにコピーしたテキストを翻訳します。"
+    },
+    {
+      "id": "normal-02",
+      "category": "normal",
+      "en": "If the download fails, check your network connection and try again later.",
+      "ja": "ダウンロードに失敗した場合は、ネットワーク接続を確認して、しばらくしてからもう一度お試しください。"
+    },
+    {
+      "id": "normal-03",
+      "category": "normal",
+      "en": "We decided to postpone the release because several critical bugs were found during testing.",
+      "ja": "テスト中に重大なバグがいくつか見つかったため、リリースを延期することにしました。"
+    },
+    {
+      "id": "normal-04",
+      "category": "normal",
+      "en": "Translation is performed entirely on your device, so your text is never sent to an external server.",
+      "ja": "翻訳はすべてお使いの端末上で行われるため、テキストが外部のサーバーに送信されることはありません。"
+    },
+    {
+      "id": "long-01",
+      "category": "long",
+      "en": "Machine translation has improved rapidly over the past decade, but it still struggles with idioms, ambiguous pronouns, and long sentences that contain several subordinate clauses, which often leads to translations that are grammatically correct yet semantically wrong.",
+      "ja": "機械翻訳はこの10年で急速に進歩したが、慣用句、曖昧な代名詞、複数の従属節を含む長い文には依然として苦戦しており、文法的には正しくても意味が誤っている翻訳になることが多い。"
+    },
+    {
+      "id": "long-02",
+      "category": "long",
+      "en": "To keep the memory usage low, the model is loaded only when it is needed, and it is released after a period of inactivity, so that the application can stay resident in the system tray without affecting other programs.",
+      "ja": "メモリ使用量を低く保つため、モデルは必要になったときにだけ読み込まれ、一定時間使われなければ解放される。これにより、アプリケーションは他のプログラムに影響を与えることなくシステムトレイに常駐できる。"
+    },
+    {
+      "id": "term-01",
+      "category": "terminology",
+      "en": "The compiler reports a borrow checker error because the mutable reference outlives the owner.",
+      "ja": "可変参照が所有者より長く生存するため、コンパイラは借用チェッカーのエラーを報告する。"
+    },
+    {
+      "id": "term-02",
+      "category": "terminology",
+      "en": "Quantizing the weights to 8-bit integers reduces the model size and speeds up inference on the CPU.",
+      "ja": "重みを8ビット整数に量子化すると、モデルサイズが小さくなり、CPUでの推論が高速になる。"
+    },
+    {
+      "id": "term-03",
+      "category": "terminology",
+      "en": "The beam search width affects both the translation quality and the latency.",
+      "ja": "ビームサーチの幅は、翻訳の品質とレイテンシの両方に影響する。"
+    },
+    {
+      "id": "term-04",
+      "category": "terminology",
+      "en": "Set the environment variable before launching the daemon, otherwise the default configuration directory is used.",
+      "ja": "デーモンを起動する前に環境変数を設定してください。設定しない場合は、既定の設定ディレクトリが使用されます。"
+    }
+  ]
+}
