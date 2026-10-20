@@ -1,0 +1,11 @@
+# クロスプラットフォーム向け Cargo 設定
+
+# Windows (MSVC)
+# CTranslate2 / SentencePiece の静的 C++ ライブラリとのリンク時に
+# CRT ランタイム不一致 (LNK2038 / LNK1169: MT_StaticRelease と MD_DynamicRelease) を防ぐため、
+# 静的ランタイム (/MT) を強制する
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

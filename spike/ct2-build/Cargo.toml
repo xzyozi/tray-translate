@@ -1,0 +1,20 @@
+[package]
+name = "ct2-build-check"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# 将来のルート workspace に取り込まれない独立した検証用クレート(Issue #5)
+[workspace]
+
+[dependencies]
+# GPU(cuda 系)は使わない。バックエンドは下の [features] で切り替えて検証する
+ct2rs = { version = "=0.10.1", default-features = false, features = ["sentencepiece"] }
+serde_json = "=1.0.154"
+
+[features]
+default = ["ruy"]
+ruy = ["ct2rs/ruy"]
+dnnl = ["ct2rs/dnnl"]
+mkl = ["ct2rs/mkl"]
+openmp = ["ct2rs/openmp-runtime-comp"]
