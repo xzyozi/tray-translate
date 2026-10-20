@@ -13,6 +13,7 @@ purpose: "プロジェクト全体の文書分類、SSOT、メタデータ、ラ
 related_documents:
   - "用語集（相対パス: ../CONTEXT.md）"
   - "ADR-001 文書ガバナンスとSSOT（相対パス: ./adr/001-document-governance-and-ssot.md）"
+  - "ADR-002 対象プラットフォームおよび環境非依存方針（相対パス: ./adr/002-target-platform-and-environment-policy.md）"
 ---
 
 # ドキュメントガバナンス
