@@ -27,6 +27,15 @@ dev = [
 [tool.uv]
 package = false
 
+# CPU 専用の PyTorch 索引（NVIDIA モジュールを含まない）
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
 # ==========================================
 # Linter & Formatter (Ruff)
 # ==========================================
