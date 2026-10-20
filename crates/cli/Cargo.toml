@@ -1,0 +1,15 @@
+[package]
+name = "tray-translate-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tt"
+path = "src/main.rs"
+
+[dependencies]
+tray-translate-core = { path = "../core" }
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

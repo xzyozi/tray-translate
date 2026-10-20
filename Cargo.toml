@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/cli",
+]
+exclude = [
+    "spike/ct2-build",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["tray-translate team"]
+license = "Apache-2.0"
+
+[workspace.dependencies]
+ct2rs = { version = "=0.10.1", default-features = false, features = ["sentencepiece", "ruy"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+anyhow = "1.0"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+dirs = "6.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
