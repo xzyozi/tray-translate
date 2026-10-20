@@ -16,6 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Issue #4 の基準値計測用(検証専用。コア本体は依存しない)
+bench = [
+    "argostranslate==1.11.0"
+]
 # 開発・テスト環境専用のパッケージ（共通デファクトスタンダード）
 dev = [
     "pytest>=8.0.0",
