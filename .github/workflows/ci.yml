@@ -23,36 +23,21 @@ permissions:
   contents: read
 
 jobs:
-  ci:
-    name: CI (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    # PR 時は Ubuntu のみ（約2分）で高速判定し、main push 時や手動実行時に Windows も含めてフル検証
-    if: github.event_name != 'pull_request' || matrix.os != 'windows-latest'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            sccache: true
-          - os: windows-latest
-            sccache: false
+  ci-ubuntu:
+    name: CI (ubuntu-latest)
+    runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+      CMAKE_C_COMPILER_LAUNCHER: "sccache"
+      CMAKE_CXX_COMPILER_LAUNCHER: "sccache"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Run sccache-action
-        if: matrix.sccache
         uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Configure sccache environment
-        if: matrix.sccache
-        shell: bash
-        run: |
-          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-          echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -88,6 +73,49 @@ jobs:
           echo "Add .github/ci.sh or a Makefile target named ci to enable checks."
 
       - name: Print sccache statistics
-        if: always() && matrix.sccache
+        if: always()
         shell: bash
         run: sccache --show-stats
+
+  ci-windows:
+    name: CI (windows-latest)
+    runs-on: windows-latest
+    # PR 時はスキップ（Ubuntu で即時判定）、main push 時や手動実行時にフル検証
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      # Projects opt in to their language-specific checks through one of these contracts.
+      - name: Detect project CI contract
+        id: detect
+        shell: bash
+        run: |
+          if [ -f ".github/ci.sh" ]; then
+            echo "runner=script" >> "$GITHUB_OUTPUT"
+          elif [ -f "Makefile" ] && grep -Eq '^ci[[:space:]]*:' Makefile; then
+            echo "runner=make" >> "$GITHUB_OUTPUT"
+          else
+            echo "runner=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run project CI script
+        if: steps.detect.outputs.runner == 'script'
+        shell: bash
+        run: bash .github/ci.sh
+
+      - name: Run Makefile CI target
+        if: steps.detect.outputs.runner == 'make'
+        shell: bash
+        run: make ci
+
+      - name: Skip project-specific checks
+        if: steps.detect.outputs.runner == 'none'
+        shell: bash
+        run: |
+          echo "No project CI contract found; project-specific checks are skipped."
+          echo "Add .github/ci.sh or a Makefile target named ci to enable checks."
