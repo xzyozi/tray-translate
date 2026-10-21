@@ -9,6 +9,14 @@ on:
       - '.gitignore'
       - '.gitattributes'
       - 'LICENSE'
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'LICENSE'
   workflow_dispatch:
 
 permissions:
@@ -18,6 +26,8 @@ jobs:
   ci:
     name: CI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # PR 時は Ubuntu のみ（約2分）で高速判定し、main push 時や手動実行時に Windows も含めてフル検証
+    if: github.event_name != 'pull_request' || matrix.os != 'windows-latest'
     strategy:
       fail-fast: false
       matrix:
