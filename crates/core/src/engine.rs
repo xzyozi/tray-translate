@@ -1,8 +1,36 @@
 use crate::error::Result;
 use crate::package::ModelPackage;
-use ct2rs::tokenizers::sentencepiece::Tokenizer;
+use ct2rs::tokenizers::sentencepiece::Tokenizer as SpmTokenizer;
 use ct2rs::{Config, TranslationOptions, Translator};
 use tracing::info;
+
+/// ct2rs が入力末尾に自動付与する EOS トークン
+const EOS_TOKEN: &str = "</s>";
+
+/// Argos Translate と同じトークナイズ結果にするためのラッパー。
+///
+/// ct2rs の SentencePiece トークナイザーは入力末尾に `</s>` を必ず付ける。
+/// Argos は `sentencepiece.encode(..., out_type=str)` の結果をそのまま渡し、
+/// EOS を付けない(Argos の en_ja モデルは `model/config.json` を持たず、
+/// CTranslate2 側も EOS を自動付与しない)。出力を Python と揃えるため、
+/// ここで末尾の `</s>` を取り除く。
+struct ArgosTokenizer {
+    inner: SpmTokenizer,
+}
+
+impl ct2rs::Tokenizer for ArgosTokenizer {
+    fn encode(&self, input: &str) -> anyhow::Result<Vec<String>> {
+        let mut tokens = ct2rs::Tokenizer::encode(&self.inner, input)?;
+        if tokens.last().map(String::as_str) == Some(EOS_TOKEN) {
+            tokens.pop();
+        }
+        Ok(tokens)
+    }
+
+    fn decode(&self, tokens: Vec<String>) -> anyhow::Result<String> {
+        ct2rs::Tokenizer::decode(&self.inner, tokens)
+    }
+}
 
 /// 翻訳推論のパラメータ設定
 #[derive(Debug, Clone)]
@@ -25,7 +53,7 @@ impl Default for TranslationConfig {
 
 /// CTranslate2 と SentencePiece トークナイザーをラップした翻訳エンジン
 pub struct TranslationEngine {
-    translator: Translator<Tokenizer>,
+    translator: Translator<ArgosTokenizer>,
     config: TranslationConfig,
 }
 
@@ -46,7 +74,9 @@ impl TranslationEngine {
             "Loading translation engine"
         );
 
-        let tokenizer = Tokenizer::from_file(&spm_path, &spm_path)?;
+        let tokenizer = ArgosTokenizer {
+            inner: SpmTokenizer::from_file(&spm_path, &spm_path)?,
+        };
         let translator = Translator::with_tokenizer(model_dir, tokenizer, &Config::default())?;
 
         Ok(Self { translator, config })
