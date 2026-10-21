@@ -16,6 +16,7 @@ related_documents:
   - "ADR-002 対象プラットフォームおよび環境非依存方針（相対パス: ./adr/002-target-platform-and-environment-policy.md）"
   - "ADR-003 G3 の合格基準（相対パス: ./adr/003-g3-acceptance-criteria.md）"
   - "ADR-004 常駐 GUI の技術選定（相対パス: ./adr/004-gui-technology-selection.md）"
+  - "GUI 手動テスト・動作確認手順書（相対パス: ./test/gui-manual-test-guide.md）"
 ---
 
 # ドキュメントガバナンス
@@ -221,3 +222,4 @@ Issue記録では、`source_issue`と`snapshot_at`を設定し、元Issueを追�
 - [ADR-002 対象プラットフォームおよび環境非依存方針](adr/002-target-platform-and-environment-policy.md)
 - [ADR-003 G3 の合格基準](adr/003-g3-acceptance-criteria.md)
 - [ADR-004 常駐 GUI の技術選定](adr/004-gui-technology-selection.md)
+- [GUI 手動テスト・動作確認手順書](test/gui-manual-test-guide.md)
