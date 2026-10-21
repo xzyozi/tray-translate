@@ -160,6 +160,17 @@ impl TranslationRouter {
         pairs.sort();
         pairs
     }
+
+    /// ロード済みのパイプライン（モデル）をすべて解放する。
+    /// 次回の翻訳時に、必要なペアだけが再ロードされる。
+    pub fn unload_all(&mut self) {
+        self.pipeline_cache.clear();
+    }
+
+    /// 現在ロードされているパイプライン数を返す
+    pub fn loaded_count(&self) -> usize {
+        self.pipeline_cache.len()
+    }
 }
 
 #[cfg(test)]
