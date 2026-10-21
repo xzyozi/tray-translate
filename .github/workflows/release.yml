@@ -38,7 +38,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          cargo build --release --bin tt -p tray-translate-gui
+          cargo build --release -p tray-translate-cli -p tray-translate-gui
 
       - name: Package binary (Linux)
         if: runner.os == 'Linux'
