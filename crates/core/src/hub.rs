@@ -2,7 +2,7 @@ use crate::error::{CoreError, Result};
 use crate::package::{install_from_archive, ModelPackage};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io;
+use std::io::{Read, Write};
 use std::path::Path;
 use tracing::info;
 
@@ -30,6 +30,8 @@ pub struct PackageIndexEntry {
     pub to_name: String,
     #[serde(default)]
     pub links: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl PackageIndexEntry {
@@ -78,6 +80,20 @@ impl ModelHub {
         entry: &PackageIndexEntry,
         target_dir: impl AsRef<Path>,
     ) -> Result<ModelPackage> {
+        Self::download_and_install_with_progress(entry, target_dir, |_, _| {})
+    }
+
+    /// パッケージをダウンロードし、進捗コールバックを呼び出しながらターゲットディレクトリへ展開・インストールする
+    ///
+    /// `progress` は `(ダウンロード済みバイト数, 総バイト数)` を受け取る。
+    pub fn download_and_install_with_progress<F>(
+        entry: &PackageIndexEntry,
+        target_dir: impl AsRef<Path>,
+        mut progress: F,
+    ) -> Result<ModelPackage>
+    where
+        F: FnMut(u64, Option<u64>),
+    {
         let url = entry.download_url()?;
         let target_dir = target_dir.as_ref();
 
@@ -90,6 +106,9 @@ impl ModelHub {
         );
 
         let response = http_agent().get(url).call()?;
+        let content_length = response
+            .header("Content-Length")
+            .and_then(|h| h.parse::<u64>().ok());
 
         // 一時ファイルに保存
         let temp_dir = tempfile::tempdir()?;
@@ -97,7 +116,19 @@ impl ModelHub {
         {
             let mut dest = File::create(&temp_archive_path)?;
             let mut reader = response.into_reader();
-            io::copy(&mut reader, &mut dest)?;
+            let mut buffer = [0u8; 64 * 1024];
+            let mut downloaded: u64 = 0;
+
+            progress(downloaded, content_length);
+            loop {
+                let bytes_read = reader.read(&mut buffer)?;
+                if bytes_read == 0 {
+                    break;
+                }
+                dest.write_all(&buffer[..bytes_read])?;
+                downloaded += bytes_read as u64;
+                progress(downloaded, content_length);
+            }
         }
 
         info!(

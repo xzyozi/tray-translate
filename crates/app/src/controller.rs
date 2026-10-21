@@ -19,8 +19,15 @@ pub enum Command {
     UpdateSettings(Settings),
     /// モデルのダウンロード開始を記録する（`en_ja` 形式のペアキー）
     StartDownload(String),
+    /// ダウンロードの進捗を記録する
+    DownloadProgress {
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
     /// ダウンロードの終了を記録する（失敗時はメッセージ）
     DownloadFinished(std::result::Result<(), String>),
+    /// 導入済みモデルを再スキャンして一覧を更新する
+    RefreshModels,
     /// アプリ自身が書き込んだテキストを既読にする（自分の出力を再翻訳しないため）
     NoteClipboardWritten(String),
 }
@@ -42,12 +49,20 @@ pub enum Event {
     DownloadStarted {
         pair: String,
     },
+    DownloadProgress {
+        pair: String,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
     DownloadSucceeded {
         pair: String,
     },
     DownloadFailed {
         pair: String,
         message: String,
+    },
+    ModelsRefreshed {
+        available_pairs: Vec<String>,
     },
     Error {
         message: String,
@@ -121,7 +136,30 @@ impl<T: Translate, C: Clock> Controller<T, C> {
             Command::IdleTick => self.idle_tick(),
             Command::UpdateSettings(settings) => self.update_settings(settings),
             Command::StartDownload(pair) => self.start_download(&pair),
+            Command::DownloadProgress {
+                downloaded_bytes,
+                total_bytes,
+            } => {
+                self.downloads
+                    .update_progress(downloaded_bytes, total_bytes);
+                if let DownloadState::Running { pair, .. } = self.downloads.state() {
+                    vec![Event::DownloadProgress {
+                        pair: pair.clone(),
+                        downloaded_bytes,
+                        total_bytes,
+                    }]
+                } else {
+                    Vec::new()
+                }
+            }
             Command::DownloadFinished(result) => self.finish_download(result),
+            Command::RefreshModels => {
+                let _ = self.service.backend_mut().refresh();
+                let pairs = self.service.backend().available_pairs();
+                vec![Event::ModelsRefreshed {
+                    available_pairs: pairs,
+                }]
+            }
             Command::NoteClipboardWritten(text) => {
                 self.note_clipboard_written(&text);
                 Vec::new()
@@ -196,14 +234,21 @@ impl<T: Translate, C: Clock> Controller<T, C> {
 
     fn finish_download(&mut self, result: std::result::Result<(), String>) -> Vec<Event> {
         let pair = match self.downloads.state() {
-            DownloadState::Running { pair } => pair.clone(),
+            DownloadState::Running { pair, .. } => pair.clone(),
             _ => return vec![error_event("no download is in progress".to_string())],
         };
 
         match result {
             Ok(()) => {
                 self.downloads.finish_ok();
-                vec![Event::DownloadSucceeded { pair }]
+                let _ = self.service.backend_mut().refresh();
+                let pairs = self.service.backend().available_pairs();
+                vec![
+                    Event::DownloadSucceeded { pair },
+                    Event::ModelsRefreshed {
+                        available_pairs: pairs,
+                    },
+                ]
             }
             Err(message) => {
                 self.downloads.finish_err(&message);
@@ -572,15 +617,52 @@ mod tests {
         let events = f.controller.handle(Command::DownloadFinished(Ok(())));
         assert_eq!(
             events,
-            vec![Event::DownloadSucceeded {
-                pair: "en_ja".to_string()
-            }]
+            vec![
+                Event::DownloadSucceeded {
+                    pair: "en_ja".to_string()
+                },
+                Event::ModelsRefreshed {
+                    available_pairs: Vec::new(),
+                }
+            ]
         );
         assert_eq!(
             f.controller.download_state(),
             &DownloadState::Succeeded {
                 pair: "en_ja".to_string()
             }
+        );
+    }
+
+    #[test]
+    fn download_progress_flow() {
+        let mut f = fixture();
+        f.controller
+            .handle(Command::StartDownload("en_ja".to_string()));
+
+        let events = f.controller.handle(Command::DownloadProgress {
+            downloaded_bytes: 512,
+            total_bytes: Some(1024),
+        });
+        assert_eq!(
+            events,
+            vec![Event::DownloadProgress {
+                pair: "en_ja".to_string(),
+                downloaded_bytes: 512,
+                total_bytes: Some(1024),
+            }]
+        );
+    }
+
+    #[test]
+    fn refresh_models_command() {
+        let mut f = fixture();
+        let events = f.controller.handle(Command::RefreshModels);
+        assert_eq!(
+            events,
+            vec![Event::ModelsRefreshed {
+                available_pairs: Vec::new(),
+            }]
         );
     }
 
