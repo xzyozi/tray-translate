@@ -1,8 +1,11 @@
 use crate::clipboard::ArboardClipboard;
 use crate::fonts::install_japanese_font;
 use eframe::egui;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
-use tray_translate_app::{get_settings_path, Command, Controller, Event, Settings, SystemClock};
+use tray_translate_app::{
+    get_settings_path, models::required_packages, Command, Controller, Event, Settings, SystemClock,
+};
 use tray_translate_core::TranslationRouter;
 
 /// クリップボード確認とアイドル解放の確認の間隔
@@ -10,9 +13,10 @@ const TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-/// 翻訳ウィンドウ。制御は `Controller` に任せ、ここでは表示と入力の受け渡しだけを行う。
+/// 翻訳ウィンドウ。制御は別スレッドの `Controller` に任せ、ここでは表示と入力の受け渡しだけを行う。
 pub struct GuiApp {
-    controller: Controller<TranslationRouter, SystemClock>,
+    cmd_tx: Sender<Command>,
+    event_rx: Receiver<Event>,
     /// 起動時に見つかった導入済みのモデル（ペアキー）
     installed: Vec<String>,
     input: String,
@@ -22,8 +26,8 @@ pub struct GuiApp {
     target_lang: String,
     watch_clipboard: bool,
     copy_result: bool,
-    /// 「翻訳中」を表示してから、次のフレームで実行するテキスト
-    pending: Option<String>,
+    /// 翻訳処理中かどうかのフラグ
+    is_translating: bool,
     /// 自動コピーする翻訳結果（次のフレームの先頭でクリップボードへ書く）
     to_copy: Option<String>,
     last_tick: Instant,
@@ -43,13 +47,36 @@ impl GuiApp {
         let watch_clipboard = settings.watch_clipboard;
         let copy_result = settings.copy_result;
 
-        let controller = Controller::new(
+        let mut controller = Controller::new(
             settings,
             Some(settings_path),
             router,
             SystemClock::new(),
             Box::new(ArboardClipboard::default()),
         )?;
+
+        let (cmd_tx, cmd_rx) = channel::<Command>();
+        let (event_tx, event_rx) = channel::<Event>();
+
+        // 翻訳などの重い処理をワーカースレッドで非同期実行し、UI の応答性を確保する
+        let egui_ctx = cc.egui_ctx.clone();
+        std::thread::Builder::new()
+            .name("translation-worker".to_string())
+            .spawn(move || {
+                while let Ok(cmd) = cmd_rx.recv() {
+                    let events = controller.handle(cmd);
+                    let mut has_events = false;
+                    for event in events {
+                        has_events = true;
+                        if event_tx.send(event).is_err() {
+                            return;
+                        }
+                    }
+                    if has_events {
+                        egui_ctx.request_repaint();
+                    }
+                }
+            })?;
 
         let status = if font.is_none() {
             "日本語フォントが見つかりません（日本語が四角で表示される場合があります）".to_string()
@@ -58,7 +85,8 @@ impl GuiApp {
         };
 
         Ok(Self {
-            controller,
+            cmd_tx,
+            event_rx,
             installed,
             input: String::new(),
             output: String::new(),
@@ -67,23 +95,23 @@ impl GuiApp {
             target_lang,
             watch_clipboard,
             copy_result,
-            pending: None,
+            is_translating: false,
             to_copy: None,
             last_tick: Instant::now(),
         })
     }
 
     /// コントローラからの通知を画面の状態へ反映する
-    fn apply(&mut self, events: Vec<Event>, from_clipboard: bool) {
-        for event in events {
+    fn process_events(&mut self) {
+        while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 Event::Translated { source, output } => {
-                    let mut status = if from_clipboard {
+                    self.is_translating = false;
+                    let mut status = "翻訳しました".to_string();
+                    if self.input.trim() != source.trim() {
                         self.input = source;
-                        "クリップボードの内容を翻訳しました".to_string()
-                    } else {
-                        "翻訳しました".to_string()
-                    };
+                        status = "クリップボードの内容を翻訳しました".to_string();
+                    }
                     if self.copy_result {
                         self.to_copy = Some(output.clone());
                         status.push_str("（結果をクリップボードにコピーしました）");
@@ -92,6 +120,7 @@ impl GuiApp {
                     self.output = output;
                 }
                 Event::TextIgnored => {
+                    self.is_translating = false;
                     self.status = "文字数が範囲外のため翻訳しませんでした".to_string();
                 }
                 Event::ModelsUnloaded => {
@@ -110,6 +139,7 @@ impl GuiApp {
                     self.status = format!("ダウンロードに失敗しました: {pair} ({message})");
                 }
                 Event::Error { message } => {
+                    self.is_translating = false;
                     self.status = format!("エラー: {message}");
                 }
             }
@@ -118,14 +148,15 @@ impl GuiApp {
 
     /// 画面の言語・監視の設定を、コントローラへ反映する
     fn update_settings(&mut self) {
-        let mut settings = self.controller.settings().clone();
-        settings.source_lang = self.source_lang.trim().to_ascii_lowercase();
-        settings.target_lang = self.target_lang.trim().to_ascii_lowercase();
-        settings.watch_clipboard = self.watch_clipboard;
-        settings.copy_result = self.copy_result;
+        let settings = Settings {
+            source_lang: self.source_lang.trim().to_ascii_lowercase(),
+            target_lang: self.target_lang.trim().to_ascii_lowercase(),
+            watch_clipboard: self.watch_clipboard,
+            copy_result: self.copy_result,
+            ..Settings::default()
+        };
 
-        let events = self.controller.handle(Command::UpdateSettings(settings));
-        self.apply(events, false);
+        let _ = self.cmd_tx.send(Command::UpdateSettings(settings));
     }
 
     /// 一定間隔で、クリップボードの確認とアイドル解放の確認を行う
@@ -133,11 +164,8 @@ impl GuiApp {
         if self.last_tick.elapsed() >= TICK_INTERVAL {
             self.last_tick = Instant::now();
 
-            let events = self.controller.handle(Command::ClipboardTick);
-            self.apply(events, true);
-
-            let events = self.controller.handle(Command::IdleTick);
-            self.apply(events, false);
+            let _ = self.cmd_tx.send(Command::ClipboardTick);
+            let _ = self.cmd_tx.send(Command::IdleTick);
         }
         // 入力が無くても、次の確認のために再描画を予約する
         ctx.request_repaint_after(TICK_INTERVAL);
@@ -147,9 +175,17 @@ impl GuiApp {
     /// 書いた内容は、クリップボード監視が再翻訳しないように既読にする。
     fn copy_pending_result(&mut self, ctx: &egui::Context) {
         if let Some(text) = self.to_copy.take() {
-            self.controller.note_clipboard_written(&text);
+            let _ = self
+                .cmd_tx
+                .send(Command::NoteClipboardWritten(text.clone()));
             ctx.copy_text(text);
         }
+    }
+
+    fn missing_packages(&self) -> Vec<String> {
+        let from = self.source_lang.trim().to_ascii_lowercase();
+        let to = self.target_lang.trim().to_ascii_lowercase();
+        required_packages(&self.installed, &from, &to)
     }
 
     fn language_row(&mut self, ui: &mut egui::Ui) {
@@ -173,7 +209,7 @@ impl GuiApp {
             self.update_settings();
         }
 
-        let missing = self.controller.missing_packages(&self.installed);
+        let missing = self.missing_packages();
         if !missing.is_empty() {
             let text = format!(
                 "未導入のモデル: {}（`tt download` で導入してください）",
@@ -186,11 +222,7 @@ impl GuiApp {
 
 impl eframe::App for GuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // 前のフレームで予約された翻訳を実行する（実行中は画面が止まる）
-        if let Some(text) = self.pending.take() {
-            let events = self.controller.handle(Command::TranslateText(text));
-            self.apply(events, false);
-        }
+        self.process_events();
         self.run_ticks(ui.ctx());
         self.copy_pending_result(ui.ctx());
 
@@ -209,13 +241,21 @@ impl eframe::App for GuiApp {
             );
 
             ui.horizontal(|ui| {
-                if ui.button("翻訳").clicked() {
+                let btn_text = if self.is_translating {
+                    "翻訳中…"
+                } else {
+                    "翻訳"
+                };
+                let btn = ui.add_enabled(!self.is_translating, egui::Button::new(btn_text));
+                if btn.clicked() {
                     self.status = "翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string();
-                    self.pending = Some(self.input.clone());
-                    ui.ctx().request_repaint();
+                    self.is_translating = true;
+                    let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
                 }
                 if ui.button("結果をコピー").clicked() {
-                    self.controller.note_clipboard_written(&self.output);
+                    let _ = self
+                        .cmd_tx
+                        .send(Command::NoteClipboardWritten(self.output.clone()));
                     ui.ctx().copy_text(self.output.clone());
                     self.status = "結果をクリップボードにコピーしました".to_string();
                 }
