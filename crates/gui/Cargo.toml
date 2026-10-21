@@ -14,3 +14,10 @@ tray-translate-app = { path = "../app" }
 eframe = "0.36"
 # クリップボードはテキストだけ扱う（画像対応の依存は入れない）
 arboard = { version = "3", default-features = false }
+
+# システムトレイ (Linux では ksni バックエンドで GTK 依存を回避)
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = "0.26"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.26", features = ["ksni"], default-features = false }

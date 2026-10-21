@@ -1,6 +1,7 @@
 mod app;
 mod clipboard;
 mod fonts;
+mod tray;
 
 use eframe::egui;
 
