@@ -1,5 +1,5 @@
 /// クリップボードの読み取り元。実体は OS ごとの実装で、テストでは偽物に差し替える。
-pub trait ClipboardSource {
+pub trait ClipboardSource: Send {
     /// 現在のテキストを返す。空、またはテキスト以外の場合は `None`。
     fn read_text(&mut self) -> Option<String>;
 }

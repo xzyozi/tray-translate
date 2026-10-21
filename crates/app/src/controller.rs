@@ -21,6 +21,8 @@ pub enum Command {
     StartDownload(String),
     /// ダウンロードの終了を記録する（失敗時はメッセージ）
     DownloadFinished(std::result::Result<(), String>),
+    /// アプリ自身が書き込んだテキストを既読にする（自分の出力を再翻訳しないため）
+    NoteClipboardWritten(String),
 }
 
 /// コントローラから、画面や OS 連携の側へ返す通知
@@ -120,6 +122,10 @@ impl<T: Translate, C: Clock> Controller<T, C> {
             Command::UpdateSettings(settings) => self.update_settings(settings),
             Command::StartDownload(pair) => self.start_download(&pair),
             Command::DownloadFinished(result) => self.finish_download(result),
+            Command::NoteClipboardWritten(text) => {
+                self.note_clipboard_written(&text);
+                Vec::new()
+            }
         }
     }
 
@@ -214,7 +220,7 @@ fn error_event(message: String) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::{Cell, RefCell};
+    use std::cell::Cell;
     use std::rc::Rc;
     use std::time::Duration;
 
@@ -237,6 +243,8 @@ mod tests {
         }
     }
 
+    use std::sync::{Arc, Mutex};
+
     struct FakeClock(Rc<Cell<Duration>>);
 
     impl Clock for FakeClock {
@@ -245,23 +253,23 @@ mod tests {
         }
     }
 
-    struct SharedClipboard(Rc<RefCell<Option<String>>>);
+    struct SharedClipboard(Arc<Mutex<Option<String>>>);
 
     impl ClipboardSource for SharedClipboard {
         fn read_text(&mut self) -> Option<String> {
-            self.0.borrow().clone()
+            self.0.lock().unwrap().clone()
         }
     }
 
     struct Fixture {
         controller: Controller<FakeBackend, FakeClock>,
         time: Rc<Cell<Duration>>,
-        clipboard: Rc<RefCell<Option<String>>>,
+        clipboard: Arc<Mutex<Option<String>>>,
     }
 
     impl Fixture {
         fn set_clipboard(&self, text: &str) {
-            *self.clipboard.borrow_mut() = Some(text.to_string());
+            *self.clipboard.lock().unwrap() = Some(text.to_string());
         }
     }
 
@@ -281,13 +289,13 @@ mod tests {
         initial_clipboard: Option<&str>,
     ) -> Fixture {
         let time = Rc::new(Cell::new(Duration::ZERO));
-        let clipboard = Rc::new(RefCell::new(initial_clipboard.map(|t| t.to_string())));
+        let clipboard = Arc::new(Mutex::new(initial_clipboard.map(|t| t.to_string())));
         let controller = Controller::new(
             settings,
             settings_path,
             FakeBackend { loaded: 0 },
             FakeClock(Rc::clone(&time)),
-            Box::new(SharedClipboard(Rc::clone(&clipboard))),
+            Box::new(SharedClipboard(Arc::clone(&clipboard))),
         )
         .unwrap();
         Fixture {
@@ -323,7 +331,7 @@ mod tests {
             None,
             FakeBackend { loaded: 0 },
             FakeClock(Rc::new(Cell::new(Duration::ZERO))),
-            Box::new(SharedClipboard(Rc::new(RefCell::new(None)))),
+            Box::new(SharedClipboard(Arc::new(Mutex::new(None)))),
         );
         assert!(result.is_err());
     }
@@ -637,5 +645,15 @@ mod tests {
             .controller
             .missing_packages(&["en_ja".to_string()])
             .is_empty());
+    }
+
+    #[test]
+    fn note_clipboard_written_via_command_prevents_translation() {
+        let mut f = fixture();
+        f.controller
+            .handle(Command::NoteClipboardWritten("written text".to_string()));
+        f.set_clipboard("written text");
+        let events = f.controller.handle(Command::ClipboardTick);
+        assert!(events.is_empty());
     }
 }
