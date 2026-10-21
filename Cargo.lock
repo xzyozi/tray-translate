@@ -1119,6 +1119,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tray-translate-app"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "tray-translate-core",
+]
+
+[[package]]
 name = "tray-translate-cli"
 version = "0.1.0"
 dependencies = [
