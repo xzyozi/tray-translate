@@ -18,6 +18,8 @@ pub struct Settings {
     pub idle_unload_secs: u64,
     /// クリップボードの変化を監視して自動翻訳する
     pub watch_clipboard: bool,
+    /// 翻訳結果を自動でクリップボードにコピーする
+    pub copy_result: bool,
     /// 翻訳対象とする最小文字数
     pub min_chars: usize,
     /// 翻訳対象とする最大文字数
@@ -32,6 +34,7 @@ impl Default for Settings {
             target_lang: "ja".to_string(),
             idle_unload_secs: 300,
             watch_clipboard: false,
+            copy_result: true,
             min_chars: 1,
             max_chars: 5000,
         }
@@ -117,6 +120,7 @@ mod tests {
             target_lang: "en".to_string(),
             idle_unload_secs: 0,
             watch_clipboard: true,
+            copy_result: false,
             min_chars: 2,
             max_chars: 100,
         };
@@ -154,6 +158,8 @@ mod tests {
         assert_eq!(settings.target_lang, "en");
         assert_eq!(settings.hotkey, Settings::default().hotkey);
         assert_eq!(settings.max_chars, Settings::default().max_chars);
+        // 項目が追加される前の設定ファイルでも、自動コピーは既定値（有効）になる
+        assert!(settings.copy_result);
     }
 
     #[test]

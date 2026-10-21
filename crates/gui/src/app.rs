@@ -21,8 +21,11 @@ pub struct GuiApp {
     source_lang: String,
     target_lang: String,
     watch_clipboard: bool,
+    copy_result: bool,
     /// 「翻訳中」を表示してから、次のフレームで実行するテキスト
     pending: Option<String>,
+    /// 自動コピーする翻訳結果（次のフレームの先頭でクリップボードへ書く）
+    to_copy: Option<String>,
     last_tick: Instant,
 }
 
@@ -38,6 +41,7 @@ impl GuiApp {
         let source_lang = settings.source_lang.clone();
         let target_lang = settings.target_lang.clone();
         let watch_clipboard = settings.watch_clipboard;
+        let copy_result = settings.copy_result;
 
         let controller = Controller::new(
             settings,
@@ -62,7 +66,9 @@ impl GuiApp {
             source_lang,
             target_lang,
             watch_clipboard,
+            copy_result,
             pending: None,
+            to_copy: None,
             last_tick: Instant::now(),
         })
     }
@@ -72,12 +78,17 @@ impl GuiApp {
         for event in events {
             match event {
                 Event::Translated { source, output } => {
-                    if from_clipboard {
+                    let mut status = if from_clipboard {
                         self.input = source;
-                        self.status = "クリップボードの内容を翻訳しました".to_string();
+                        "クリップボードの内容を翻訳しました".to_string()
                     } else {
-                        self.status = "翻訳しました".to_string();
+                        "翻訳しました".to_string()
+                    };
+                    if self.copy_result {
+                        self.to_copy = Some(output.clone());
+                        status.push_str("（結果をクリップボードにコピーしました）");
                     }
+                    self.status = status;
                     self.output = output;
                 }
                 Event::TextIgnored => {
@@ -111,6 +122,7 @@ impl GuiApp {
         settings.source_lang = self.source_lang.trim().to_ascii_lowercase();
         settings.target_lang = self.target_lang.trim().to_ascii_lowercase();
         settings.watch_clipboard = self.watch_clipboard;
+        settings.copy_result = self.copy_result;
 
         let events = self.controller.handle(Command::UpdateSettings(settings));
         self.apply(events, false);
@@ -131,6 +143,15 @@ impl GuiApp {
         ctx.request_repaint_after(TICK_INTERVAL);
     }
 
+    /// 自動コピーの対象があれば、クリップボードへ書く。
+    /// 書いた内容は、クリップボード監視が再翻訳しないように既読にする。
+    fn copy_pending_result(&mut self, ctx: &egui::Context) {
+        if let Some(text) = self.to_copy.take() {
+            self.controller.note_clipboard_written(&text);
+            ctx.copy_text(text);
+        }
+    }
+
     fn language_row(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("翻訳元");
@@ -144,6 +165,11 @@ impl GuiApp {
 
         let label = "クリップボードを監視して自動翻訳する";
         if ui.checkbox(&mut self.watch_clipboard, label).changed() {
+            self.update_settings();
+        }
+
+        let label = "翻訳結果を自動でクリップボードにコピーする";
+        if ui.checkbox(&mut self.copy_result, label).changed() {
             self.update_settings();
         }
 
@@ -166,6 +192,7 @@ impl eframe::App for GuiApp {
             self.apply(events, false);
         }
         self.run_ticks(ui.ctx());
+        self.copy_pending_result(ui.ctx());
 
         egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("tray-translate");
@@ -188,6 +215,7 @@ impl eframe::App for GuiApp {
                     ui.ctx().request_repaint();
                 }
                 if ui.button("結果をコピー").clicked() {
+                    self.controller.note_clipboard_written(&self.output);
                     ui.ctx().copy_text(self.output.clone());
                     self.status = "結果をクリップボードにコピーしました".to_string();
                 }
