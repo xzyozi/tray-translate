@@ -68,9 +68,18 @@ pub fn required_packages(installed: &[String], from: &str, to: &str) -> Vec<Stri
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DownloadState {
     Idle,
-    Running { pair: String },
-    Succeeded { pair: String },
-    Failed { pair: String, message: String },
+    Running {
+        pair: String,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
+    Succeeded {
+        pair: String,
+    },
+    Failed {
+        pair: String,
+        message: String,
+    },
 }
 
 /// ダウンロードの状態を管理する。同時に実行できるのは 1 件だけ。
@@ -97,19 +106,32 @@ impl DownloadTracker {
 
     /// ダウンロードを開始する。すでに実行中ならエラー。
     pub fn start(&mut self, pair: &str) -> Result<()> {
-        if let DownloadState::Running { pair: current } = &self.state {
+        if let DownloadState::Running { pair: current, .. } = &self.state {
             return Err(AppError::DownloadInProgress(current.clone()));
         }
         self.state = DownloadState::Running {
             pair: pair.to_string(),
+            downloaded_bytes: 0,
+            total_bytes: None,
         };
         Ok(())
+    }
+
+    /// ダウンロードの進捗状況を更新する。
+    pub fn update_progress(&mut self, downloaded_bytes: u64, total_bytes: Option<u64>) {
+        if let DownloadState::Running { pair, .. } = &self.state {
+            self.state = DownloadState::Running {
+                pair: pair.clone(),
+                downloaded_bytes,
+                total_bytes,
+            };
+        }
     }
 
     /// 実行中のダウンロードを成功として終える。実行中でなければ何もしない。
     pub fn finish_ok(&mut self) {
         match std::mem::replace(&mut self.state, DownloadState::Idle) {
-            DownloadState::Running { pair } => {
+            DownloadState::Running { pair, .. } => {
                 self.state = DownloadState::Succeeded { pair };
             }
             other => self.state = other,
@@ -119,7 +141,7 @@ impl DownloadTracker {
     /// 実行中のダウンロードを失敗として終える。実行中でなければ何もしない。
     pub fn finish_err(&mut self, message: &str) {
         match std::mem::replace(&mut self.state, DownloadState::Idle) {
-            DownloadState::Running { pair } => {
+            DownloadState::Running { pair, .. } => {
                 self.state = DownloadState::Failed {
                     pair,
                     message: message.to_string(),
@@ -248,10 +270,23 @@ mod tests {
         let result = tracker.start("ja_en");
         assert!(matches!(result, Err(AppError::DownloadInProgress(ref pair)) if pair == "en_ja"));
         // 実行中の状態は変わらない
+        assert!(matches!(
+            tracker.state(),
+            DownloadState::Running { pair, .. } if pair == "en_ja"
+        ));
+    }
+
+    #[test]
+    fn download_progress_update() {
+        let mut tracker = DownloadTracker::new();
+        tracker.start("en_ja").unwrap();
+        tracker.update_progress(1024, Some(2048));
         assert_eq!(
             tracker.state(),
             &DownloadState::Running {
-                pair: "en_ja".to_string()
+                pair: "en_ja".to_string(),
+                downloaded_bytes: 1024,
+                total_bytes: Some(2048),
             }
         );
     }

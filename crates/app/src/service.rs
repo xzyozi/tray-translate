@@ -10,6 +10,14 @@ pub trait Translate {
     fn unload_all(&mut self);
     /// 現在ロードされているモデル数
     fn loaded_count(&self) -> usize;
+    /// パッケージディレクトリを再スキャンして利用可能なモデルを更新する
+    fn refresh(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// 利用可能な言語ペアの一覧
+    fn available_pairs(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 impl Translate for TranslationRouter {
@@ -23,6 +31,14 @@ impl Translate for TranslationRouter {
 
     fn loaded_count(&self) -> usize {
         TranslationRouter::loaded_count(self)
+    }
+
+    fn refresh(&mut self) -> Result<()> {
+        Ok(TranslationRouter::refresh_available_packages(self)?)
+    }
+
+    fn available_pairs(&self) -> Vec<String> {
+        TranslationRouter::available_pairs(self)
     }
 }
 
@@ -114,6 +130,10 @@ impl<T: Translate, C: Clock> TranslationService<T, C> {
 
     pub fn backend(&self) -> &T {
         &self.backend
+    }
+
+    pub fn backend_mut(&mut self) -> &mut T {
+        &mut self.backend
     }
 
     /// テキストを翻訳する。

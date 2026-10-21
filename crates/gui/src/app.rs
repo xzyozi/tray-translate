@@ -1,6 +1,7 @@
 use crate::clipboard::ArboardClipboard;
 use crate::fonts::install_japanese_font;
 use crate::hotkey::HotkeyManager;
+use crate::models_view::ModelsView;
 use crate::tray::{TrayAction, TrayManager};
 use eframe::egui;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -15,6 +16,14 @@ const TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// 画面タブ
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveTab {
+    Translate,
+    Models,
+    Settings,
+}
+
 /// 翻訳ウィンドウ。制御は別スレッドの `Controller` に任せ、ここでは表示と入力の受け渡しだけを行う。
 pub struct GuiApp {
     cmd_tx: Sender<Command>,
@@ -23,7 +32,11 @@ pub struct GuiApp {
     hotkey: Option<HotkeyManager>,
     /// ウィンドウが表示されているか
     is_window_visible: bool,
-    /// 起動時に見つかった導入済みのモデル（ペアキー）
+    /// 現在表示中のタブ
+    active_tab: ActiveTab,
+    /// モデル管理ビュー
+    models_view: ModelsView,
+    /// 導入済みのモデル（ペアキー）
     installed: Vec<String>,
     input: String,
     output: String,
@@ -31,8 +44,11 @@ pub struct GuiApp {
     source_lang: String,
     target_lang: String,
     hotkey_str: String,
+    idle_unload_secs: u64,
     watch_clipboard: bool,
     copy_result: bool,
+    min_chars: usize,
+    max_chars: usize,
     /// 翻訳処理中かどうかのフラグ
     is_translating: bool,
     /// 自動コピーする翻訳結果（次のフレームの先頭でクリップボードへ書く）
@@ -52,8 +68,11 @@ impl GuiApp {
         let source_lang = settings.source_lang.clone();
         let target_lang = settings.target_lang.clone();
         let hotkey_str = settings.hotkey.clone();
+        let idle_unload_secs = settings.idle_unload_secs;
         let watch_clipboard = settings.watch_clipboard;
         let copy_result = settings.copy_result;
+        let min_chars = settings.min_chars;
+        let max_chars = settings.max_chars;
 
         let mut controller = Controller::new(
             settings,
@@ -116,6 +135,8 @@ impl GuiApp {
             tray,
             hotkey,
             is_window_visible: true,
+            active_tab: ActiveTab::Translate,
+            models_view: ModelsView::new(),
             installed,
             input: String::new(),
             output: String::new(),
@@ -123,8 +144,11 @@ impl GuiApp {
             source_lang,
             target_lang,
             hotkey_str,
+            idle_unload_secs,
             watch_clipboard,
             copy_result,
+            min_chars,
+            max_chars,
             is_translating: false,
             to_copy: None,
             last_tick: Instant::now(),
@@ -161,13 +185,11 @@ impl GuiApp {
         }
 
         // 3. ウィンドウの「×」ボタン押下をインターセプト
-        if ctx.input(|i| i.viewport().close_requested()) {
-            if self.tray.is_some() {
-                // トレイアイコンが存在する場合は、終了せずにウィンドウを隠す
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                self.is_window_visible = false;
-            }
+        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() {
+            // トレイアイコンが存在する場合は、終了せずにウィンドウを隠す
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.is_window_visible = false;
         }
     }
 
@@ -212,11 +234,33 @@ impl GuiApp {
                 Event::DownloadStarted { pair } => {
                     self.status = format!("ダウンロードを開始しました: {pair}");
                 }
+                Event::DownloadProgress {
+                    pair,
+                    downloaded_bytes,
+                    total_bytes,
+                } => {
+                    self.models_view.download_progress = Some((downloaded_bytes, total_bytes));
+                    if let Some(total) = total_bytes {
+                        let pct =
+                            (downloaded_bytes as f64 / total as f64 * 100.0).clamp(0.0, 100.0);
+                        self.status = format!("ダウンロード中: {pair} ({pct:.0}%)");
+                    } else {
+                        let mb = downloaded_bytes as f64 / 1_048_576.0;
+                        self.status = format!("ダウンロード中: {pair} ({mb:.1} MB)");
+                    }
+                }
                 Event::DownloadSucceeded { pair } => {
+                    self.models_view.active_download_pair = None;
+                    self.models_view.download_progress = None;
                     self.status = format!("ダウンロードが完了しました: {pair}");
                 }
                 Event::DownloadFailed { pair, message } => {
+                    self.models_view.active_download_pair = None;
+                    self.models_view.download_progress = None;
                     self.status = format!("ダウンロードに失敗しました: {pair} ({message})");
+                }
+                Event::ModelsRefreshed { available_pairs } => {
+                    self.installed = available_pairs;
                 }
                 Event::Error { message } => {
                     self.is_translating = false;
@@ -226,15 +270,17 @@ impl GuiApp {
         }
     }
 
-    /// 画面の言語・ホットキー・監視の設定を、コントローラへ反映する
+    /// 画面の設定値をコントローラへ反映・保存する
     fn update_settings(&mut self) {
         let settings = Settings {
             source_lang: self.source_lang.trim().to_ascii_lowercase(),
             target_lang: self.target_lang.trim().to_ascii_lowercase(),
             hotkey: self.hotkey_str.trim().to_string(),
+            idle_unload_secs: self.idle_unload_secs,
             watch_clipboard: self.watch_clipboard,
             copy_result: self.copy_result,
-            ..Settings::default()
+            min_chars: self.min_chars,
+            max_chars: self.max_chars,
         };
 
         let _ = self.cmd_tx.send(Command::UpdateSettings(settings));
@@ -248,12 +294,10 @@ impl GuiApp {
             let _ = self.cmd_tx.send(Command::ClipboardTick);
             let _ = self.cmd_tx.send(Command::IdleTick);
         }
-        // 入力が無くても、次の確認のために再描画を予約する
         ctx.request_repaint_after(TICK_INTERVAL);
     }
 
-    /// 自動コピーの対象があれば、クリップボードへ書く。
-    /// 書いた内容は、クリップボード監視が再翻訳しないように既読にする。
+    /// 自動コピーの対象があれば、クリップボードへ書く
     fn copy_pending_result(&mut self, ctx: &egui::Context) {
         if let Some(text) = self.to_copy.take() {
             let _ = self
@@ -269,39 +313,129 @@ impl GuiApp {
         required_packages(&self.installed, &from, &to)
     }
 
-    fn settings_section(&mut self, ui: &mut egui::Ui) {
+    /// 翻訳メイン画面
+    fn render_translate_tab(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("翻訳元");
             ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(40.0));
             ui.label("→ 翻訳先");
             ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(40.0));
-            ui.separator();
-            ui.label("ホットキー");
-            ui.add(egui::TextEdit::singleline(&mut self.hotkey_str).desired_width(90.0));
-            if ui.button("保存").clicked() {
-                self.update_settings();
+
+            let missing = self.missing_packages();
+            if !missing.is_empty() {
+                ui.separator();
+                ui.colored_label(
+                    egui::Color32::from_rgb(210, 120, 0),
+                    format!("未導入: {}", missing.join(", ")),
+                );
+                if ui.button("モデル管理で取得").clicked() {
+                    self.active_tab = ActiveTab::Models;
+                }
             }
         });
+
+        ui.add_space(4.0);
+        ui.label("翻訳するテキスト");
+        ui.add(
+            egui::TextEdit::multiline(&mut self.input)
+                .desired_rows(5)
+                .desired_width(f32::INFINITY),
+        );
 
         ui.horizontal(|ui| {
-            let label = "クリップボード監視";
-            if ui.checkbox(&mut self.watch_clipboard, label).changed() {
-                self.update_settings();
+            let btn_text = if self.is_translating {
+                "翻訳中…"
+            } else {
+                "翻訳"
+            };
+            let btn = ui.add_enabled(!self.is_translating, egui::Button::new(btn_text));
+            if btn.clicked() {
+                self.status = "翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string();
+                self.is_translating = true;
+                let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
             }
-
-            let label = "翻訳結果を自動コピー";
-            if ui.checkbox(&mut self.copy_result, label).changed() {
-                self.update_settings();
+            if ui.button("結果をコピー").clicked() {
+                let _ = self
+                    .cmd_tx
+                    .send(Command::NoteClipboardWritten(self.output.clone()));
+                ui.ctx().copy_text(self.output.clone());
+                self.status = "結果をクリップボードにコピーしました".to_string();
+            }
+            if ui.button("クリア").clicked() {
+                self.input.clear();
+                self.output.clear();
             }
         });
 
-        let missing = self.missing_packages();
-        if !missing.is_empty() {
-            let text = format!(
-                "未導入のモデル: {}（`tt download` で導入してください）",
-                missing.join(", ")
-            );
-            ui.colored_label(egui::Color32::from_rgb(200, 120, 0), text);
+        ui.add_space(4.0);
+        ui.label("翻訳結果");
+        ui.add(
+            egui::TextEdit::multiline(&mut self.output.as_str())
+                .desired_rows(5)
+                .desired_width(f32::INFINITY),
+        );
+    }
+
+    /// 設定画面
+    fn render_settings_tab(&mut self, ui: &mut egui::Ui) {
+        ui.heading("環境設定");
+        ui.separator();
+
+        egui::Grid::new("settings_grid")
+            .num_columns(2)
+            .spacing([12.0, 10.0])
+            .show(ui, |ui| {
+                ui.label("翻訳元言語コード:");
+                ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(60.0));
+                ui.end_row();
+
+                ui.label("翻訳先言語コード:");
+                ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(60.0));
+                ui.end_row();
+
+                ui.label("グローバルホットキー:");
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut self.hotkey_str).desired_width(120.0));
+                    ui.small("（例: Ctrl+Shift+T, Ctrl+Alt+T）");
+                });
+                ui.end_row();
+
+                ui.label("アイドル時モデル解放:");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.idle_unload_secs, 0..=1800)
+                            .text("秒 (0で常時保持)"),
+                    );
+                });
+                ui.end_row();
+
+                ui.label("クリップボード監視:");
+                ui.checkbox(
+                    &mut self.watch_clipboard,
+                    "コピーされたテキストを自動翻訳する",
+                );
+                ui.end_row();
+
+                ui.label("翻訳結果の自動コピー:");
+                ui.checkbox(
+                    &mut self.copy_result,
+                    "翻訳完了時に結果をクリップボードに書き戻す",
+                );
+                ui.end_row();
+
+                ui.label("文字数制限:");
+                ui.horizontal(|ui| {
+                    ui.label("最小:");
+                    ui.add(egui::DragValue::new(&mut self.min_chars).range(1..=100));
+                    ui.label("最大:");
+                    ui.add(egui::DragValue::new(&mut self.max_chars).range(100..=50000));
+                });
+                ui.end_row();
+            });
+
+        ui.add_space(12.0);
+        if ui.button("設定を保存").clicked() {
+            self.update_settings();
         }
     }
 }
@@ -319,6 +453,7 @@ impl eframe::App for GuiApp {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
+            // ヘッダーバー
             ui.horizontal(|ui| {
                 ui.heading("tray-translate");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -329,52 +464,28 @@ impl eframe::App for GuiApp {
                     }
                 });
             });
-            ui.separator();
 
-            self.settings_section(ui);
-            ui.add_space(6.0);
-
-            ui.label("翻訳するテキスト");
-            ui.add(
-                egui::TextEdit::multiline(&mut self.input)
-                    .desired_rows(5)
-                    .desired_width(f32::INFINITY),
-            );
-
+            // タブセレクタ
             ui.horizontal(|ui| {
-                let btn_text = if self.is_translating {
-                    "翻訳中…"
-                } else {
-                    "翻訳"
-                };
-                let btn = ui.add_enabled(!self.is_translating, egui::Button::new(btn_text));
-                if btn.clicked() {
-                    self.status = "翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string();
-                    self.is_translating = true;
-                    let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
-                }
-                if ui.button("結果をコピー").clicked() {
-                    let _ = self
-                        .cmd_tx
-                        .send(Command::NoteClipboardWritten(self.output.clone()));
-                    ui.ctx().copy_text(self.output.clone());
-                    self.status = "結果をクリップボードにコピーしました".to_string();
-                }
-                if ui.button("クリア").clicked() {
-                    self.input.clear();
-                    self.output.clear();
-                }
+                ui.selectable_value(&mut self.active_tab, ActiveTab::Translate, "翻訳");
+                ui.selectable_value(&mut self.active_tab, ActiveTab::Models, "モデル管理");
+                ui.selectable_value(&mut self.active_tab, ActiveTab::Settings, "設定");
             });
-
-            ui.add_space(6.0);
-            ui.label("翻訳結果");
-            ui.add(
-                egui::TextEdit::multiline(&mut self.output.as_str())
-                    .desired_rows(5)
-                    .desired_width(f32::INFINITY),
-            );
-
             ui.separator();
+
+            // 各タブの内容
+            match self.active_tab {
+                ActiveTab::Translate => self.render_translate_tab(ui),
+                ActiveTab::Models => {
+                    self.models_view.show(ui, &self.installed, &self.cmd_tx);
+                }
+                ActiveTab::Settings => self.render_settings_tab(ui),
+            }
+
+            ui.add_space(4.0);
+            ui.separator();
+
+            // フッター・ステータスバー
             ui.label(&self.status);
             ui.small(format!("導入済みのモデル: {}", self.installed.join(", ")));
         });

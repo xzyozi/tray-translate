@@ -98,7 +98,7 @@ fn create_default_icon() -> Result<Icon, BoxError> {
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             // 外枠を少し丸める（角の3ピクセルは透明）
-            let is_corner = (x < 3 || x >= WIDTH - 3) && (y < 3 || y >= HEIGHT - 3);
+            let is_corner = !(3..WIDTH - 3).contains(&x) && !(3..HEIGHT - 3).contains(&y);
             if is_corner {
                 rgba.extend_from_slice(&[0, 0, 0, 0]);
                 continue;
