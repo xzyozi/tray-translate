@@ -5,6 +5,7 @@
 
 pub mod clipboard;
 pub mod config;
+pub mod controller;
 pub mod error;
 pub mod hotkey;
 pub mod models;
@@ -13,6 +14,7 @@ pub mod service;
 
 pub use clipboard::{ClipboardSource, ClipboardWatcher};
 pub use config::Settings;
+pub use controller::{Command, Controller, Event};
 pub use error::{AppError, Result};
 pub use hotkey::{Hotkey, Modifier};
 pub use models::{
