@@ -14,6 +14,7 @@ tray-translate-app = { path = "../app" }
 eframe = "0.36"
 # クリップボードはテキストだけ扱う（画像対応の依存は入れない）
 arboard = { version = "3", default-features = false }
+global-hotkey = "0.9"
 
 # システムトレイ (Linux では ksni バックエンドで GTK 依存を回避)
 [target.'cfg(not(target_os = "linux"))'.dependencies]

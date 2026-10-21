@@ -1,5 +1,6 @@
 use crate::clipboard::ArboardClipboard;
 use crate::fonts::install_japanese_font;
+use crate::hotkey::HotkeyManager;
 use crate::tray::{TrayAction, TrayManager};
 use eframe::egui;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -19,6 +20,7 @@ pub struct GuiApp {
     cmd_tx: Sender<Command>,
     event_rx: Receiver<Event>,
     tray: Option<TrayManager>,
+    hotkey: Option<HotkeyManager>,
     /// ウィンドウが表示されているか
     is_window_visible: bool,
     /// 起動時に見つかった導入済みのモデル（ペアキー）
@@ -28,6 +30,7 @@ pub struct GuiApp {
     status: String,
     source_lang: String,
     target_lang: String,
+    hotkey_str: String,
     watch_clipboard: bool,
     copy_result: bool,
     /// 翻訳処理中かどうかのフラグ
@@ -48,6 +51,7 @@ impl GuiApp {
 
         let source_lang = settings.source_lang.clone();
         let target_lang = settings.target_lang.clone();
+        let hotkey_str = settings.hotkey.clone();
         let watch_clipboard = settings.watch_clipboard;
         let copy_result = settings.copy_result;
 
@@ -91,6 +95,15 @@ impl GuiApp {
             }
         };
 
+        // グローバルホットキーの初期化（失敗しても通常ウィンドウとして動作）
+        let hotkey = match HotkeyManager::new(cc.egui_ctx.clone(), &hotkey_str) {
+            Ok(hk) => Some(hk),
+            Err(e) => {
+                eprintln!("グローバルホットキーの登録をスキップしました: {e}");
+                None
+            }
+        };
+
         let status = if font.is_none() {
             "日本語フォントが見つかりません（日本語が四角で表示される場合があります）".to_string()
         } else {
@@ -101,6 +114,7 @@ impl GuiApp {
             cmd_tx,
             event_rx,
             tray,
+            hotkey,
             is_window_visible: true,
             installed,
             input: String::new(),
@@ -108,6 +122,7 @@ impl GuiApp {
             status,
             source_lang,
             target_lang,
+            hotkey_str,
             watch_clipboard,
             copy_result,
             is_translating: false,
@@ -116,9 +131,19 @@ impl GuiApp {
         })
     }
 
-    /// トレイおよびウィンドウの閉じる要求を処理する
-    fn handle_tray_and_window_events(&mut self, ctx: &egui::Context) {
-        // トレイからの操作
+    /// トレイ、ホットキー、ウィンドウの閉じる要求を処理する
+    fn handle_os_events(&mut self, ctx: &egui::Context) {
+        // 1. グローバルホットキー押下
+        if let Some(hotkey) = &self.hotkey {
+            if hotkey.poll_pressed() {
+                self.is_window_visible = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        }
+
+        // 2. トレイからの操作
         if let Some(tray) = &self.tray {
             if let Some(action) = tray.poll_events() {
                 match action {
@@ -135,7 +160,7 @@ impl GuiApp {
             }
         }
 
-        // ウィンドウの「×」ボタン押下をインターセプト
+        // 3. ウィンドウの「×」ボタン押下をインターセプト
         if ctx.input(|i| i.viewport().close_requested()) {
             if self.tray.is_some() {
                 // トレイアイコンが存在する場合は、終了せずにウィンドウを隠す
@@ -171,8 +196,18 @@ impl GuiApp {
                 Event::ModelsUnloaded => {
                     self.status = "しばらく使われなかったため、モデルを解放しました".to_string();
                 }
-                Event::SettingsUpdated { hotkey_changed: _ } => {
-                    self.status = "設定を保存しました".to_string();
+                Event::SettingsUpdated { hotkey_changed } => {
+                    if hotkey_changed {
+                        if let Some(hotkey) = &mut self.hotkey {
+                            if let Err(e) = hotkey.register(&self.hotkey_str) {
+                                self.status = format!("ホットキー再登録失敗: {e}");
+                            } else {
+                                self.status = "設定とホットキーを更新しました".to_string();
+                            }
+                        }
+                    } else {
+                        self.status = "設定を保存しました".to_string();
+                    }
                 }
                 Event::DownloadStarted { pair } => {
                     self.status = format!("ダウンロードを開始しました: {pair}");
@@ -191,11 +226,12 @@ impl GuiApp {
         }
     }
 
-    /// 画面の言語・監視の設定を、コントローラへ反映する
+    /// 画面の言語・ホットキー・監視の設定を、コントローラへ反映する
     fn update_settings(&mut self) {
         let settings = Settings {
             source_lang: self.source_lang.trim().to_ascii_lowercase(),
             target_lang: self.target_lang.trim().to_ascii_lowercase(),
+            hotkey: self.hotkey_str.trim().to_string(),
             watch_clipboard: self.watch_clipboard,
             copy_result: self.copy_result,
             ..Settings::default()
@@ -233,26 +269,31 @@ impl GuiApp {
         required_packages(&self.installed, &from, &to)
     }
 
-    fn language_row(&mut self, ui: &mut egui::Ui) {
+    fn settings_section(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("翻訳元");
-            ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(48.0));
+            ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(40.0));
             ui.label("→ 翻訳先");
-            ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(48.0));
-            if ui.button("適用").clicked() {
+            ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(40.0));
+            ui.separator();
+            ui.label("ホットキー");
+            ui.add(egui::TextEdit::singleline(&mut self.hotkey_str).desired_width(90.0));
+            if ui.button("保存").clicked() {
                 self.update_settings();
             }
         });
 
-        let label = "クリップボードを監視して自動翻訳する";
-        if ui.checkbox(&mut self.watch_clipboard, label).changed() {
-            self.update_settings();
-        }
+        ui.horizontal(|ui| {
+            let label = "クリップボード監視";
+            if ui.checkbox(&mut self.watch_clipboard, label).changed() {
+                self.update_settings();
+            }
 
-        let label = "翻訳結果を自動でクリップボードにコピーする";
-        if ui.checkbox(&mut self.copy_result, label).changed() {
-            self.update_settings();
-        }
+            let label = "翻訳結果を自動コピー";
+            if ui.checkbox(&mut self.copy_result, label).changed() {
+                self.update_settings();
+            }
+        });
 
         let missing = self.missing_packages();
         if !missing.is_empty() {
@@ -267,7 +308,7 @@ impl GuiApp {
 
 impl eframe::App for GuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.handle_tray_and_window_events(ui.ctx());
+        self.handle_os_events(ui.ctx());
         self.process_events();
         self.run_ticks(ui.ctx());
         self.copy_pending_result(ui.ctx());
@@ -290,13 +331,13 @@ impl eframe::App for GuiApp {
             });
             ui.separator();
 
-            self.language_row(ui);
-            ui.add_space(8.0);
+            self.settings_section(ui);
+            ui.add_space(6.0);
 
             ui.label("翻訳するテキスト");
             ui.add(
                 egui::TextEdit::multiline(&mut self.input)
-                    .desired_rows(6)
+                    .desired_rows(5)
                     .desired_width(f32::INFINITY),
             );
 
@@ -325,11 +366,11 @@ impl eframe::App for GuiApp {
                 }
             });
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
             ui.label("翻訳結果");
             ui.add(
                 egui::TextEdit::multiline(&mut self.output.as_str())
-                    .desired_rows(6)
+                    .desired_rows(5)
                     .desired_width(f32::INFINITY),
             );
 
