@@ -186,7 +186,10 @@ mod tests {
     #[test]
     fn pivot_packages_are_required_for_non_english_pairs() {
         let installed = keys(&[]);
-        assert_eq!(required_packages(&installed, "ja", "es"), keys(&["ja_en", "en_es"]));
+        assert_eq!(
+            required_packages(&installed, "ja", "es"),
+            keys(&["ja_en", "en_es"])
+        );
     }
 
     #[test]

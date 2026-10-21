@@ -85,9 +85,15 @@ mod tests {
     #[test]
     fn returns_new_text_once() {
         let mut watcher = ClipboardWatcher::new(1, 100);
-        assert_eq!(poll_with(&mut watcher, Some("hello")), Some("hello".to_string()));
+        assert_eq!(
+            poll_with(&mut watcher, Some("hello")),
+            Some("hello".to_string())
+        );
         assert_eq!(poll_with(&mut watcher, Some("hello")), None);
-        assert_eq!(poll_with(&mut watcher, Some("world")), Some("world".to_string()));
+        assert_eq!(
+            poll_with(&mut watcher, Some("world")),
+            Some("world".to_string())
+        );
     }
 
     #[test]
@@ -101,9 +107,15 @@ mod tests {
     #[test]
     fn same_text_after_clipboard_was_emptied_is_detected_again() {
         let mut watcher = ClipboardWatcher::new(1, 100);
-        assert_eq!(poll_with(&mut watcher, Some("hello")), Some("hello".to_string()));
+        assert_eq!(
+            poll_with(&mut watcher, Some("hello")),
+            Some("hello".to_string())
+        );
         assert_eq!(poll_with(&mut watcher, None), None);
-        assert_eq!(poll_with(&mut watcher, Some("hello")), Some("hello".to_string()));
+        assert_eq!(
+            poll_with(&mut watcher, Some("hello")),
+            Some("hello".to_string())
+        );
     }
 
     #[test]
@@ -111,7 +123,10 @@ mod tests {
         let mut watcher = ClipboardWatcher::new(1, 100);
         watcher.prime(&mut clip(Some("old")));
         assert_eq!(poll_with(&mut watcher, Some("old")), None);
-        assert_eq!(poll_with(&mut watcher, Some("new")), Some("new".to_string()));
+        assert_eq!(
+            poll_with(&mut watcher, Some("new")),
+            Some("new".to_string())
+        );
     }
 
     #[test]
@@ -119,7 +134,10 @@ mod tests {
         let mut watcher = ClipboardWatcher::new(1, 100);
         watcher.mark_written("translated");
         assert_eq!(poll_with(&mut watcher, Some("translated")), None);
-        assert_eq!(poll_with(&mut watcher, Some("next")), Some("next".to_string()));
+        assert_eq!(
+            poll_with(&mut watcher, Some("next")),
+            Some("next".to_string())
+        );
     }
 
     #[test]
@@ -128,8 +146,14 @@ mod tests {
         assert_eq!(poll_with(&mut watcher, Some("ab")), None);
         assert_eq!(poll_with(&mut watcher, Some("abcdef")), None);
         assert_eq!(poll_with(&mut watcher, Some("   x   ")), None);
-        assert_eq!(poll_with(&mut watcher, Some("abc")), Some("abc".to_string()));
-        assert_eq!(poll_with(&mut watcher, Some("abcde")), Some("abcde".to_string()));
+        assert_eq!(
+            poll_with(&mut watcher, Some("abc")),
+            Some("abc".to_string())
+        );
+        assert_eq!(
+            poll_with(&mut watcher, Some("abcde")),
+            Some("abcde".to_string())
+        );
     }
 
     #[test]

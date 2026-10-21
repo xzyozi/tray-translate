@@ -135,11 +135,9 @@ impl<T: Translate, C: Clock> TranslationService<T, C> {
             });
         }
 
-        let output = self.backend.translate(
-            &self.config.source_lang,
-            &self.config.target_lang,
-            trimmed,
-        )?;
+        let output =
+            self.backend
+                .translate(&self.config.source_lang, &self.config.target_lang, trimmed)?;
         self.last_used = Some(self.clock.now());
         Ok(Some(output))
     }
@@ -219,7 +217,10 @@ mod tests {
 
     fn make_service(
         idle_unload: Option<Duration>,
-    ) -> (TranslationService<FakeBackend, FakeClock>, Rc<Cell<Duration>>) {
+    ) -> (
+        TranslationService<FakeBackend, FakeClock>,
+        Rc<Cell<Duration>>,
+    ) {
         let time = Rc::new(Cell::new(Duration::ZERO));
         let clock = FakeClock(Rc::clone(&time));
         let service = TranslationService::new(FakeBackend::default(), clock, config(idle_unload));
@@ -247,7 +248,10 @@ mod tests {
     fn too_long_text_is_rejected() {
         let (mut service, _) = make_service(None);
         let result = service.translate("12345678901");
-        assert!(matches!(result, Err(AppError::TextTooLong { len: 11, max: 10 })));
+        assert!(matches!(
+            result,
+            Err(AppError::TextTooLong { len: 11, max: 10 })
+        ));
         assert!(service.backend().calls.is_empty());
     }
 

@@ -158,9 +158,18 @@ mod tests {
 
     #[test]
     fn accepts_aliases_for_modifiers() {
-        assert_eq!(Hotkey::parse("Control+Option+1").unwrap().to_string(), "Ctrl+Alt+1");
-        assert_eq!(Hotkey::parse("Win+Space").unwrap().to_string(), "Super+Space");
-        assert_eq!(Hotkey::parse("Cmd+Return").unwrap().to_string(), "Super+Enter");
+        assert_eq!(
+            Hotkey::parse("Control+Option+1").unwrap().to_string(),
+            "Ctrl+Alt+1"
+        );
+        assert_eq!(
+            Hotkey::parse("Win+Space").unwrap().to_string(),
+            "Super+Space"
+        );
+        assert_eq!(
+            Hotkey::parse("Cmd+Return").unwrap().to_string(),
+            "Super+Enter"
+        );
     }
 
     #[test]
