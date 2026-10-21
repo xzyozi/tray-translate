@@ -14,6 +14,7 @@ related_documents:
   - "用語集（相対パス: ../CONTEXT.md）"
   - "ADR-001 文書ガバナンスとSSOT（相対パス: ./adr/001-document-governance-and-ssot.md）"
   - "ADR-002 対象プラットフォームおよび環境非依存方針（相対パス: ./adr/002-target-platform-and-environment-policy.md）"
+  - "ADR-003 G3 の合格基準（相対パス: ./adr/003-g3-acceptance-criteria.md）"
 ---
 
 # ドキュメントガバナンス
@@ -216,3 +217,4 @@ Issue記録では、`source_issue`と`snapshot_at`を設定し、元Issueを追�
 - [用語集](../CONTEXT.md)
 - [設計書テンプレート運用ガイド](design/TEMPLATE/README.md)
 - [ADR-001 文書ガバナンスとSSOT](adr/001-document-governance-and-ssot.md)
+- [ADR-003 G3 の合格基準](adr/003-g3-acceptance-criteria.md)
