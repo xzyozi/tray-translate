@@ -37,13 +37,19 @@ pub enum Event {
         /// ホットキーが変わった。OS 側の登録をやり直す必要がある
         hotkey_changed: bool,
     },
-    DownloadStarted { pair: String },
-    DownloadSucceeded { pair: String },
+    DownloadStarted {
+        pair: String,
+    },
+    DownloadSucceeded {
+        pair: String,
+    },
     DownloadFailed {
         pair: String,
         message: String,
     },
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// 常駐アプリの制御。画面・トレイ・ホットキー・実クリップボードは、このコントローラの外側に置き、
@@ -325,7 +331,9 @@ mod tests {
     #[test]
     fn translates_user_text() {
         let mut f = fixture();
-        let events = f.controller.handle(Command::TranslateText("  hello ".to_string()));
+        let events = f
+            .controller
+            .handle(Command::TranslateText("  hello ".to_string()));
         assert_eq!(events, vec![translated("hello", "[en->ja] hello")]);
     }
 
@@ -395,7 +403,8 @@ mod tests {
     #[test]
     fn idle_models_are_unloaded_once() {
         let mut f = fixture();
-        f.controller.handle(Command::TranslateText("hello".to_string()));
+        f.controller
+            .handle(Command::TranslateText("hello".to_string()));
 
         f.time.set(Duration::from_secs(9));
         assert!(f.controller.handle(Command::IdleTick).is_empty());
@@ -425,7 +434,9 @@ mod tests {
         );
         assert_eq!(f.controller.settings(), &new);
 
-        let events = f.controller.handle(Command::TranslateText("hello".to_string()));
+        let events = f
+            .controller
+            .handle(Command::TranslateText("hello".to_string()));
         assert_eq!(events, vec![translated("hello", "[en->es] hello")]);
     }
 
@@ -530,14 +541,19 @@ mod tests {
 
         f.set_clipboard("fresh text");
         let events = f.controller.handle(Command::ClipboardTick);
-        assert_eq!(events, vec![translated("fresh text", "[en->ja] fresh text")]);
+        assert_eq!(
+            events,
+            vec![translated("fresh text", "[en->ja] fresh text")]
+        );
     }
 
     #[test]
     fn download_success_flow() {
         let mut f = fixture();
 
-        let events = f.controller.handle(Command::StartDownload("en_ja".to_string()));
+        let events = f
+            .controller
+            .handle(Command::StartDownload("en_ja".to_string()));
         assert_eq!(
             events,
             vec![Event::DownloadStarted {
@@ -563,7 +579,8 @@ mod tests {
     #[test]
     fn download_failure_flow() {
         let mut f = fixture();
-        f.controller.handle(Command::StartDownload("en_ja".to_string()));
+        f.controller
+            .handle(Command::StartDownload("en_ja".to_string()));
 
         let events = f
             .controller
@@ -580,9 +597,12 @@ mod tests {
     #[test]
     fn second_download_is_rejected_while_running() {
         let mut f = fixture();
-        f.controller.handle(Command::StartDownload("en_ja".to_string()));
+        f.controller
+            .handle(Command::StartDownload("en_ja".to_string()));
 
-        let events = f.controller.handle(Command::StartDownload("ja_en".to_string()));
+        let events = f
+            .controller
+            .handle(Command::StartDownload("ja_en".to_string()));
         assert_eq!(events.len(), 1);
         assert!(is_error_containing(&events[0], "already"));
     }
@@ -590,7 +610,9 @@ mod tests {
     #[test]
     fn invalid_pair_is_rejected_and_state_stays_idle() {
         let mut f = fixture();
-        let events = f.controller.handle(Command::StartDownload("enja".to_string()));
+        let events = f
+            .controller
+            .handle(Command::StartDownload("enja".to_string()));
         assert_eq!(events.len(), 1);
         assert!(is_error_containing(&events[0], "invalid"));
         assert_eq!(f.controller.download_state(), &DownloadState::Idle);
@@ -607,7 +629,10 @@ mod tests {
     #[test]
     fn missing_packages_follow_the_language_settings() {
         let f = fixture();
-        assert_eq!(f.controller.missing_packages(&[]), vec!["en_ja".to_string()]);
+        assert_eq!(
+            f.controller.missing_packages(&[]),
+            vec!["en_ja".to_string()]
+        );
         assert!(f
             .controller
             .missing_packages(&["en_ja".to_string()])
