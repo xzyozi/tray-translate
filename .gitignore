@@ -42,3 +42,6 @@ models/
 # Benchmark raw outputs (commit only curated results under docs/)
 bench_*.json
 rust_*.json
+
+# uv lock file (Python は検証専用のためコミットしない。Issue #24)
+uv.lock
