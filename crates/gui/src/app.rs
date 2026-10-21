@@ -1,5 +1,6 @@
 use crate::clipboard::ArboardClipboard;
 use crate::fonts::install_japanese_font;
+use crate::tray::{TrayAction, TrayManager};
 use eframe::egui;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -17,6 +18,9 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 pub struct GuiApp {
     cmd_tx: Sender<Command>,
     event_rx: Receiver<Event>,
+    tray: Option<TrayManager>,
+    /// ウィンドウが表示されているか
+    is_window_visible: bool,
     /// 起動時に見つかった導入済みのモデル（ペアキー）
     installed: Vec<String>,
     input: String,
@@ -78,6 +82,15 @@ impl GuiApp {
                 }
             })?;
 
+        // トレイアイコンの初期化（失敗しても通常ウィンドウとして動作）
+        let tray = match TrayManager::new(cc.egui_ctx.clone()) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                eprintln!("トレイアイコンの初期化をスキップしました: {e}");
+                None
+            }
+        };
+
         let status = if font.is_none() {
             "日本語フォントが見つかりません（日本語が四角で表示される場合があります）".to_string()
         } else {
@@ -87,6 +100,8 @@ impl GuiApp {
         Ok(Self {
             cmd_tx,
             event_rx,
+            tray,
+            is_window_visible: true,
             installed,
             input: String::new(),
             output: String::new(),
@@ -99,6 +114,36 @@ impl GuiApp {
             to_copy: None,
             last_tick: Instant::now(),
         })
+    }
+
+    /// トレイおよびウィンドウの閉じる要求を処理する
+    fn handle_tray_and_window_events(&mut self, ctx: &egui::Context) {
+        // トレイからの操作
+        if let Some(tray) = &self.tray {
+            if let Some(action) = tray.poll_events() {
+                match action {
+                    TrayAction::Show => {
+                        self.is_window_visible = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    TrayAction::Quit => {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+        }
+
+        // ウィンドウの「×」ボタン押下をインターセプト
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.tray.is_some() {
+                // トレイアイコンが存在する場合は、終了せずにウィンドウを隠す
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                self.is_window_visible = false;
+            }
+        }
     }
 
     /// コントローラからの通知を画面の状態へ反映する
@@ -222,12 +267,27 @@ impl GuiApp {
 
 impl eframe::App for GuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.handle_tray_and_window_events(ui.ctx());
         self.process_events();
         self.run_ticks(ui.ctx());
         self.copy_pending_result(ui.ctx());
 
+        // ウィンドウが非表示（トレイ格納中）なら CentralPanel を描画しない
+        if !self.is_window_visible {
+            return;
+        }
+
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("tray-translate");
+            ui.horizontal(|ui| {
+                ui.heading("tray-translate");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if self.tray.is_some() && ui.button("トレイに隠す").clicked() {
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        self.is_window_visible = false;
+                    }
+                });
+            });
             ui.separator();
 
             self.language_row(ui);
