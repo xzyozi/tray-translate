@@ -18,10 +18,8 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            bin_name: tt
             asset_name: tray-translate-linux-x86_64.tar.gz
           - os: windows-latest
-            bin_name: tt.exe
             asset_name: tray-translate-windows-x86_64.zip
 
     steps:
@@ -44,15 +42,20 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          cd target/release
-          tar -czf "../../${{ matrix.asset_name }}" "${{ matrix.bin_name }}" ../../README.md ../../LICENSE
+          mkdir -p staging
+          cp target/release/tt staging/
+          cp README.md LICENSE staging/
+          tar -czf "${{ matrix.asset_name }}" -C staging .
 
       - name: Package binary (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          cd target/release
-          7z a "../../${{ matrix.asset_name }}" tt.exe tt-gui.exe ../../README.md ../../LICENSE
+          mkdir -p staging
+          cp target/release/tt.exe staging/
+          cp target/release/tt-gui.exe staging/
+          cp README.md LICENSE staging/
+          7z a "${{ matrix.asset_name }}" ./staging/*
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
