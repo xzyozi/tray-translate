@@ -9,6 +9,16 @@ use tracing::info;
 pub const DEFAULT_INDEX_URL: &str =
     "https://raw.githubusercontent.com/argosopentech/argospm-index/main/index.json";
 
+/// ダウンロード用の HTTP エージェントを作る。
+///
+/// - 環境変数のプロキシ設定（`HTTPS_PROXY` / `HTTP_PROXY` など）を使う（`proxy-from-env`）。
+/// - TLS の信頼するルート証明書は、同梱の Mozilla ルートではなく OS の証明書ストアを使う
+///   （`native-certs`）。社内 CA が TLS を中継するプロキシ環境でも、OS に CA が入っていれば接続できる。
+/// - 証明書の検証は無効化しない。
+fn http_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new().try_proxy_from_env(true).build()
+}
+
 /// パッケージインデックスの各エントリ
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PackageIndexEntry {
@@ -45,7 +55,7 @@ impl ModelHub {
     /// 指定した URL からインデックスを取得する
     pub fn fetch_index_from_url(url: &str) -> Result<Vec<PackageIndexEntry>> {
         info!(url = %url, "Fetching model package index");
-        let response = ureq::get(url).call()?;
+        let response = http_agent().get(url).call()?;
         let entries: Vec<PackageIndexEntry> = response.into_json()?;
         Ok(entries)
     }
@@ -79,7 +89,7 @@ impl ModelHub {
             "Downloading model package"
         );
 
-        let response = ureq::get(url).call()?;
+        let response = http_agent().get(url).call()?;
 
         // 一時ファイルに保存
         let temp_dir = tempfile::tempdir()?;
