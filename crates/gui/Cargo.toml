@@ -1,0 +1,16 @@
+[package]
+name = "tray-translate-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tt-gui"
+path = "src/main.rs"
+
+[dependencies]
+tray-translate-core = { path = "../core" }
+tray-translate-app = { path = "../app" }
+eframe = "0.36"
+# クリップボードはテキストだけ扱う（画像対応の依存は入れない）
+arboard = { version = "3", default-features = false }

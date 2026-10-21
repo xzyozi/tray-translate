@@ -3,6 +3,14 @@ members = [
     "crates/app",
     "crates/core",
     "crates/cli",
+    "crates/gui",
+]
+# GUI は既定のビルド対象に含めない（CI の Ubuntu で GUI の依存をビルドしないため）。
+# GUI のビルド・実行は `cargo run -p tray-translate-gui` のように明示する。
+default-members = [
+    "crates/app",
+    "crates/core",
+    "crates/cli",
 ]
 exclude = [
     "spike/ct2-build",
