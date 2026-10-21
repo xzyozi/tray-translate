@@ -33,6 +33,10 @@ dev = [
 # 検証用途のみ。プロジェクト自体はビルド・インストールしない（依存のみ uv で管理）
 [tool.uv]
 package = false
+# 検証機(Rocky 8 / VirtualBox ゲスト、AVX/AVX2 なし)では numpy 2.4 以降が
+# 「X86_V2 非対応」で import に失敗する(Issue #24)。解決版を 2.4 未満に抑える。
+# CPU が変わった場合や Python 側を CI に載せる場合は、この制約を見直す。
+constraint-dependencies = ["numpy<2.4"]
 
 # CPU 専用の PyTorch 索引（NVIDIA モジュールを含まない）
 [[tool.uv.index]]
