@@ -16,7 +16,11 @@ pub const DEFAULT_INDEX_URL: &str =
 ///   （`native-certs`）。社内 CA が TLS を中継するプロキシ環境でも、OS に CA が入っていれば接続できる。
 /// - 証明書の検証は無効化しない。
 fn http_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().try_proxy_from_env(true).build()
+    ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .try_proxy_from_env(true)
+        .build()
 }
 
 /// パッケージインデックスの各エントリ
@@ -35,11 +39,11 @@ pub struct PackageIndexEntry {
 }
 
 impl PackageIndexEntry {
-    /// 利用可能な HTTPS ダウンロード URL を取得する
+    /// 利用可能な HTTPS ダウンロード URL を取得する（HTTP は拒否）
     pub fn download_url(&self) -> Result<&str> {
         self.links
             .iter()
-            .find(|link| link.starts_with("https://") || link.starts_with("http://"))
+            .find(|link| link.starts_with("https://"))
             .map(|s| s.as_str())
             .ok_or(CoreError::NoDownloadLink)
     }
@@ -54,8 +58,13 @@ impl ModelHub {
         Self::fetch_index_from_url(DEFAULT_INDEX_URL)
     }
 
-    /// 指定した URL からインデックスを取得する
+    /// 指定した URL からインデックスを取得する（HTTPS のみ許可）
     pub fn fetch_index_from_url(url: &str) -> Result<Vec<PackageIndexEntry>> {
+        if !url.starts_with("https://") {
+            return Err(CoreError::InvalidPackage(format!(
+                "Insecure index URL (HTTPS required): {url}"
+            )));
+        }
         info!(url = %url, "Fetching model package index");
         let response = http_agent().get(url).call()?;
         let entries: Vec<PackageIndexEntry> = response.into_json()?;
