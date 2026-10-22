@@ -1,5 +1,5 @@
-use eframe::egui;
 use crate::theme;
+use eframe::egui;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use tray_translate_app::Command;
