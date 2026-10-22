@@ -30,18 +30,27 @@ impl HotkeyManager {
         Ok(instance)
     }
 
-    /// ホットキー文字列を登録する。登録済みのものがあれば解除してから再登録する。
+    /// ホットキー文字列を登録する。登録に失敗した場合は旧ホットキーを維持する。
     pub fn register(&mut self, hotkey_str: &str) -> Result<(), BoxError> {
-        // 既存のホットキーを解除
-        if let Some(old) = self.current_hotkey.take() {
-            let _ = self.manager.unregister(old);
-        }
-
         let parsed = Hotkey::parse(hotkey_str)?;
         let target = to_global_hotkey(&parsed)
             .ok_or_else(|| format!("サポートされていないホットキーです: {hotkey_str}"))?;
 
-        self.manager.register(target)?;
+        // 既存のホットキーを一旦退避・解除
+        let old_hotkey = self.current_hotkey.take();
+        if let Some(old) = &old_hotkey {
+            let _ = self.manager.unregister(*old);
+        }
+
+        if let Err(e) = self.manager.register(target) {
+            // 新しいキーの登録に失敗した場合、旧キーの復元を試みる
+            if let Some(old) = old_hotkey {
+                let _ = self.manager.register(old);
+                self.current_hotkey = Some(old);
+            }
+            return Err(e.into());
+        }
+
         self.current_hotkey = Some(target);
         Ok(())
     }

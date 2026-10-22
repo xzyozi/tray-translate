@@ -52,6 +52,8 @@ pub struct GuiApp {
     max_chars: usize,
     /// 翻訳処理中かどうかのフラグ
     is_translating: bool,
+    /// アプリ終了シーケンス中かどうかのフラグ（CancelClose を抑制する）
+    is_quitting: bool,
     /// 自動コピーする翻訳結果（次のフレームの先頭でクリップボードへ書く）
     to_copy: Option<String>,
     last_tick: Instant,
@@ -116,6 +118,22 @@ impl GuiApp {
             }
         };
 
+        // バックグラウンドで定期的にクリップボード確認・アイドル解放の tick を送信
+        let tick_tx = cmd_tx.clone();
+        let tick_ctx = cc.egui_ctx.clone();
+        std::thread::Builder::new()
+            .name("gui-ticker".to_string())
+            .spawn(move || loop {
+                std::thread::sleep(TICK_INTERVAL);
+                if tick_tx.send(Command::ClipboardTick).is_err() {
+                    break;
+                }
+                if tick_tx.send(Command::IdleTick).is_err() {
+                    break;
+                }
+                tick_ctx.request_repaint();
+            })?;
+
         // グローバルホットキーの初期化（失敗しても通常ウィンドウとして動作）
         let hotkey = match HotkeyManager::new(cc.egui_ctx.clone(), &hotkey_str) {
             Ok(hk) => Some(hk),
@@ -152,6 +170,7 @@ impl GuiApp {
             min_chars,
             max_chars,
             is_translating: false,
+            is_quitting: false,
             to_copy: None,
             last_tick: Instant::now(),
         })
@@ -180,6 +199,7 @@ impl GuiApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     }
                     TrayAction::Quit => {
+                        self.is_quitting = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 }
@@ -187,8 +207,8 @@ impl GuiApp {
         }
 
         // 3. ウィンドウの「×」ボタン押下をインターセプト
-        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() {
-            // トレイアイコンが存在する場合は、終了せずにウィンドウを隠す
+        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() && !self.is_quitting {
+            // トレイアイコンが存在し終了フラグが立っていない場合は、終了せずにウィンドウを隠す
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             self.is_window_visible = false;
@@ -224,7 +244,7 @@ impl GuiApp {
                     if hotkey_changed {
                         if let Some(hotkey) = &mut self.hotkey {
                             if let Err(e) = hotkey.register(&self.hotkey_str) {
-                                self.status = format!("ホットキー再登録失敗: {e}");
+                                self.status = format!("ホットキー再登録失敗（旧キーを維持）: {e}");
                             } else {
                                 self.status = "設定とホットキーを更新しました".to_string();
                             }
@@ -319,9 +339,17 @@ impl GuiApp {
     fn render_translate_tab(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("翻訳元");
-            ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(40.0));
+            let src_res = ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(40.0));
             ui.label("→ 翻訳先");
-            ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(40.0));
+            let dst_res = ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(40.0));
+
+            // 言語入力が変更されたらコントローラの設定へ即時反映する
+            if (src_res.changed() || dst_res.changed() || src_res.lost_focus() || dst_res.lost_focus())
+                && !self.source_lang.trim().is_empty()
+                && !self.target_lang.trim().is_empty()
+            {
+                self.update_settings();
+            }
 
             let missing = self.missing_packages();
             if !missing.is_empty() {
@@ -349,6 +377,7 @@ impl GuiApp {
             };
             let btn = ui.add_enabled(!self.is_translating, egui::Button::new(btn_text));
             if btn.clicked() {
+                self.update_settings();
                 self.status = "翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string();
                 self.is_translating = true;
                 let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
