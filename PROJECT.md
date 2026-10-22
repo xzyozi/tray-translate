@@ -6,7 +6,7 @@ Argos Translate を参考に、Rust コアと常駐 GUI で構成するオフラ
 
 ## 状態
 
-初期セットアップ中。全体の進行は Issue #1(ロードマップ)で管理する。
+v0.1.0 公開済み。基盤の安定性・安全性強化、および GUI の UI/UX 刷新フェーズ。全体の進行は Issue #1(ロードマップ) および各機能 Issue で管理する。
 
 ## 実行環境の方針
 
@@ -19,3 +19,5 @@ Argos Translate を参考に、Rust コアと常駐 GUI で構成するオフラ
 - 用語集: [CONTEXT.md](CONTEXT.md)
 - ドキュメントガバナンス: [docs/README.md](docs/README.md)
 - 対象プラットフォーム方針: [ADR-002](docs/adr/002-target-platform-and-environment-policy.md)
+- GUI 技術選定: [docs/adr/004-gui-framework-selection.md](docs/adr/004-gui-framework-selection.md)
+- GUI 手動動作確認手順: [docs/test/gui-manual-test-guide.md](docs/test/gui-manual-test-guide.md)
