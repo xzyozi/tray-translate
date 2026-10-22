@@ -207,7 +207,8 @@ impl GuiApp {
         }
 
         // 3. ウィンドウの「×」ボタン押下をインターセプト
-        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() && !self.is_quitting {
+        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() && !self.is_quitting
+        {
             // トレイアイコンが存在し終了フラグが立っていない場合は、終了せずにウィンドウを隠す
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
@@ -339,12 +340,17 @@ impl GuiApp {
     fn render_translate_tab(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("翻訳元");
-            let src_res = ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(40.0));
+            let src_res =
+                ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(40.0));
             ui.label("→ 翻訳先");
-            let dst_res = ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(40.0));
+            let dst_res =
+                ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(40.0));
 
             // 言語入力が変更されたらコントローラの設定へ即時反映する
-            if (src_res.changed() || dst_res.changed() || src_res.lost_focus() || dst_res.lost_focus())
+            if (src_res.changed()
+                || dst_res.changed()
+                || src_res.lost_focus()
+                || dst_res.lost_focus())
                 && !self.source_lang.trim().is_empty()
                 && !self.target_lang.trim().is_empty()
             {
