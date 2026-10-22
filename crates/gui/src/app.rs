@@ -2,6 +2,7 @@ use crate::clipboard::ArboardClipboard;
 use crate::fonts::install_japanese_font;
 use crate::hotkey::HotkeyManager;
 use crate::models_view::ModelsView;
+use crate::theme;
 use crate::tray::{TrayAction, TrayManager};
 use eframe::egui;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -58,6 +59,7 @@ pub struct GuiApp {
 
 impl GuiApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Result<Self, BoxError> {
+        theme::apply(&cc.egui_ctx);
         let font = install_japanese_font(&cc.egui_ctx);
 
         let settings_path = get_settings_path()?;
@@ -324,10 +326,7 @@ impl GuiApp {
             let missing = self.missing_packages();
             if !missing.is_empty() {
                 ui.separator();
-                ui.colored_label(
-                    egui::Color32::from_rgb(210, 120, 0),
-                    format!("未導入: {}", missing.join(", ")),
-                );
+                ui.colored_label(theme::WARNING, format!("未導入: {}", missing.join(", ")));
                 if ui.button("モデル管理で取得").clicked() {
                     self.active_tab = ActiveTab::Models;
                 }
