@@ -116,7 +116,7 @@ pub fn install_from_archive(
     let staging_root = temp_dir.path();
 
     // アーカイブ内のトップディレクトリ（例: "en_ja/"）を検出
-    let top_prefix = if archive.len() > 0 {
+    let top_prefix = if !archive.is_empty() {
         let first_name = archive.by_index(0)?.name().to_string();
         if first_name.contains('/') {
             first_name.split('/').next().unwrap_or_default().to_string()
