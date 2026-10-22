@@ -1,3 +1,4 @@
+use crate::theme;
 use eframe::egui;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -194,7 +195,7 @@ impl ModelsView {
 
         // インデックス取得エラーの表示
         if let Some(err) = &self.index_error {
-            ui.colored_label(egui::Color32::from_rgb(220, 50, 50), err);
+            ui.colored_label(theme::ERROR, err);
         }
 
         // フィルター入力
@@ -258,10 +259,7 @@ impl ModelsView {
                                     ui.label(&entry.package_version);
 
                                     if is_installed {
-                                        ui.colored_label(
-                                            egui::Color32::from_rgb(0, 180, 80),
-                                            "導入済み",
-                                        );
+                                        ui.colored_label(theme::SUCCESS, "導入済み");
                                     } else if is_downloading {
                                         ui.label("ダウンロード中…");
                                     } else {

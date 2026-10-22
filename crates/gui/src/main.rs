@@ -3,6 +3,7 @@ mod clipboard;
 mod fonts;
 mod hotkey;
 mod models_view;
+mod theme;
 mod tray;
 
 use eframe::egui;
