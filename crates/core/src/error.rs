@@ -24,6 +24,9 @@ pub enum CoreError {
     #[error("Missing model file: {0}")]
     MissingModelFile(PathBuf),
 
+    #[error("Invalid model package: {0}")]
+    InvalidPackage(String),
+
     #[error("Standard data directory not found for this platform")]
     DataDirNotFound,
 

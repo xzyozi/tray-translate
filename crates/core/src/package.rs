@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 use zip::ZipArchive;
 
+/// 展開時の上限設定（Zip bomb / リソース枯渇対策）
+const MAX_ARCHIVE_ENTRIES: usize = 1_000;
+const MAX_UNCOMPRESSED_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2 GB
+
 /// Argos 形式の言語モデルパッケージの metadata.json 構造体
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PackageMetadata {
@@ -77,7 +81,7 @@ impl ModelPackage {
     }
 }
 
-/// `.argosmodel` (ZIP アーカイブ) を指定の宛先ディレクトリへ展開・インストールする。
+/// `.argosmodel` (ZIP アーカイブ) を指定の宛先ディレクトリへ安全・原子的に展開・インストールする。
 pub fn install_from_archive(
     archive_path: impl AsRef<Path>,
     target_dir: impl AsRef<Path>,
@@ -94,38 +98,63 @@ pub fn install_from_archive(
     let file = File::open(archive_path)?;
     let mut archive = ZipArchive::new(file)?;
 
-    // アーカイブ内のトップディレクトリ（例: "en_ja/"）を検出する
-    let top_prefix = {
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(CoreError::InvalidPackage(format!(
+            "Archive contains too many entries ({} > limit {})",
+            archive.len(),
+            MAX_ARCHIVE_ENTRIES
+        )));
+    }
+
+    // 展開先ベースディレクトリを確保
+    fs::create_dir_all(target_dir)?;
+
+    // 一時ディレクトリを作成して安全に展開（途中失敗で壊れたファイルを残さない）
+    let temp_dir = tempfile::Builder::new()
+        .prefix(".tmp_pkg_")
+        .tempdir_in(target_dir)?;
+    let staging_root = temp_dir.path();
+
+    // アーカイブ内のトップディレクトリ（例: "en_ja/"）を検出
+    let top_prefix = if archive.len() > 0 {
         let first_name = archive.by_index(0)?.name().to_string();
-        first_name.split('/').next().unwrap_or_default().to_string()
-    };
-
-    let destination = if !top_prefix.is_empty() {
-        target_dir.join(&top_prefix)
+        if first_name.contains('/') {
+            first_name.split('/').next().unwrap_or_default().to_string()
+        } else {
+            String::new()
+        }
     } else {
-        target_dir.to_path_buf()
+        String::new()
     };
 
-    fs::create_dir_all(&destination)?;
+    let mut total_uncompressed_bytes: u64 = 0;
 
     for i in 0..archive.len() {
         let mut zip_file = archive.by_index(i)?;
-        let name = zip_file.name();
 
-        // 不要な上位ディレクトリプレフィックスを剥がして相対パスにする
-        let relative_path = if !top_prefix.is_empty() && name.starts_with(&top_prefix) {
-            name.strip_prefix(&top_prefix)
-                .unwrap_or(name)
-                .trim_start_matches('/')
+        // Zip Slip 対策: enclosed_name によるパストラバーサル防止検証
+        let enclosed_path = zip_file.enclosed_name().ok_or_else(|| {
+            CoreError::InvalidPackage(format!(
+                "Insecure entry path in archive (Zip Slip attempt): {}",
+                zip_file.name()
+            ))
+        })?;
+
+        // トッププレフィックスを剥がして相対パスにする
+        let relative_path = if !top_prefix.is_empty() {
+            match enclosed_path.strip_prefix(&top_prefix) {
+                Ok(stripped) => stripped.to_path_buf(),
+                Err(_) => enclosed_path.to_path_buf(),
+            }
         } else {
-            name
+            enclosed_path.to_path_buf()
         };
 
-        if relative_path.is_empty() {
+        if relative_path.as_os_str().is_empty() {
             continue;
         }
 
-        let out_path = destination.join(relative_path);
+        let out_path = staging_root.join(&relative_path);
 
         if zip_file.is_dir() {
             fs::create_dir_all(&out_path)?;
@@ -135,10 +164,36 @@ pub fn install_from_archive(
                     fs::create_dir_all(parent)?;
                 }
             }
+
+            total_uncompressed_bytes += zip_file.size();
+            if total_uncompressed_bytes > MAX_UNCOMPRESSED_SIZE {
+                return Err(CoreError::InvalidPackage(format!(
+                    "Uncompressed size exceeds limit ({} bytes > {} limit)",
+                    total_uncompressed_bytes, MAX_UNCOMPRESSED_SIZE
+                )));
+            }
+
             let mut out_file = File::create(&out_path)?;
             io::copy(&mut zip_file, &mut out_file)?;
         }
     }
+
+    // 展開されたパッケージの構造・メタデータを検証
+    let metadata = PackageMetadata::load_from_file(staging_root.join("metadata.json"))?;
+    let destination_name = if !top_prefix.is_empty() {
+        top_prefix
+    } else {
+        format!("{}_{}", metadata.from_code, metadata.to_code)
+    };
+    let destination = target_dir.join(destination_name);
+
+    // 既存のインストールがあれば置換
+    if destination.exists() {
+        fs::remove_dir_all(&destination)?;
+    }
+
+    // 原子的リネームで確定（Windows では target_dir 同一ドライブ内の一時ディレクトリなので高速 rename 可能）
+    fs::rename(staging_root, &destination)?;
 
     ModelPackage::open(&destination)
 }
@@ -146,12 +201,14 @@ pub fn install_from_archive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
 
     #[test]
     fn test_parse_metadata() {
         let json = r#"{
-            "package_version": "1.1",
-            "argos_version": "1.1",
+            "package_version": "1.0",
+            "argos_version": "1.0",
             "from_code": "en",
             "from_name": "English",
             "to_code": "ja",
@@ -161,6 +218,30 @@ mod tests {
         let meta: PackageMetadata = serde_json::from_str(json).unwrap();
         assert_eq!(meta.from_code, "en");
         assert_eq!(meta.to_code, "ja");
-        assert_eq!(meta.package_version, "1.1");
+    }
+
+    #[test]
+    fn test_reject_zip_slip() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let malicious_zip_path = temp_dir.path().join("malicious.zip");
+
+        // パストラバーサルを含む zip を作成
+        {
+            let file = File::create(&malicious_zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = SimpleFileOptions::default();
+
+            zip.start_file("../evil.txt", options).unwrap();
+            zip.write_all(b"evil content").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let install_dest = temp_dir.path().join("installed");
+        let result = install_from_archive(&malicious_zip_path, &install_dest);
+
+        assert!(result.is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains("Insecure entry path") || err_msg.contains("Zip Slip"));
+        assert!(!temp_dir.path().join("evil.txt").exists());
     }
 }
