@@ -4,7 +4,7 @@ use crate::paths::get_model_dir;
 use crate::pipeline::TranslatorPipeline;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::info;
+use tracing::{info, warn};
 
 /// 翻訳のルーティング経路
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,13 +57,31 @@ impl TranslationRouter {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
-                if let Ok(package) = ModelPackage::open(&path) {
-                    let key = format!(
-                        "{}_{}",
-                        package.metadata().from_code,
-                        package.metadata().to_code
-                    );
-                    self.available_pairs.insert(key, path);
+                match ModelPackage::open(&path) {
+                    Ok(package) => {
+                        let key = format!(
+                            "{}_{}",
+                            package.metadata().from_code,
+                            package.metadata().to_code
+                        );
+                        if let Some(old_path) =
+                            self.available_pairs.insert(key.clone(), path.clone())
+                        {
+                            warn!(
+                                pair = %key,
+                                previous_path = %old_path.display(),
+                                current_path = %path.display(),
+                                "Duplicate model package detected for pair; overwritten with latest entry"
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        warn!(
+                            path = %path.display(),
+                            error = %err,
+                            "Failed to open model package directory, skipping"
+                        );
+                    }
                 }
             }
         }
@@ -77,8 +95,17 @@ impl TranslationRouter {
             package.metadata().from_code,
             package.metadata().to_code
         );
-        self.available_pairs
-            .insert(key, package.root_dir().to_path_buf());
+        if let Some(old_path) = self
+            .available_pairs
+            .insert(key.clone(), package.root_dir().to_path_buf())
+        {
+            warn!(
+                pair = %key,
+                previous_path = %old_path.display(),
+                current_path = %package.root_dir().display(),
+                "Duplicate model package detected during manual registration; overwritten"
+            );
+        }
     }
 
     /// 指定された言語ペアのルーティング経路を決定する
@@ -119,7 +146,12 @@ impl TranslationRouter {
     fn get_or_load_pipeline(&mut self, pair_key: &str) -> Result<&TranslatorPipeline> {
         if !self.pipeline_cache.contains_key(pair_key) {
             let path = self.available_pairs.get(pair_key).ok_or_else(|| {
-                CoreError::UnsupportedLanguagePair(pair_key.to_string(), String::new())
+                let parts: Vec<&str> = pair_key.split('_').collect();
+                if parts.len() == 2 {
+                    CoreError::UnsupportedLanguagePair(parts[0].to_string(), parts[1].to_string())
+                } else {
+                    CoreError::UnsupportedLanguagePair(pair_key.to_string(), String::new())
+                }
             })?;
 
             info!(pair = %pair_key, path = %path.display(), "Loading pipeline into cache");
@@ -144,32 +176,43 @@ impl TranslationRouter {
                 step1_key,
                 step2_key,
             } => {
-                info!(step1 = %step1_key, step2 = %step2_key, "Executing pivot translation");
-                let step1_pipeline = self.get_or_load_pipeline(&step1_key)?;
-                let intermediate = step1_pipeline.translate(text)?;
+                info!(
+                    step1 = %step1_key,
+                    step2 = %step2_key,
+                    "Executing 2-step pivot translation via 'en'"
+                );
+                let intermediate = {
+                    let pipeline1 = self.get_or_load_pipeline(&step1_key)?;
+                    pipeline1.translate(text)?
+                };
 
-                let step2_pipeline = self.get_or_load_pipeline(&step2_key)?;
-                step2_pipeline.translate(&intermediate)
+                let pipeline2 = self.get_or_load_pipeline(&step2_key)?;
+                pipeline2.translate(&intermediate)
             }
         }
     }
 
-    /// 利用可能な言語ペアの一覧を取得する
+    /// 現在ロードされているパイプライン数（メモリ消費の目安）
+    pub fn loaded_count(&self) -> usize {
+        self.pipeline_cache.len()
+    }
+
+    /// キャッシュしているパイプラインをすべてアンロード（破棄）してメモリを解放する
+    pub fn unload_all(&mut self) {
+        if !self.pipeline_cache.is_empty() {
+            info!(
+                count = self.pipeline_cache.len(),
+                "Unloading all cached translation pipelines"
+            );
+            self.pipeline_cache.clear();
+        }
+    }
+
+    /// 利用可能な言語ペアの一覧（ソート済み）
     pub fn available_pairs(&self) -> Vec<String> {
         let mut pairs: Vec<String> = self.available_pairs.keys().cloned().collect();
         pairs.sort();
         pairs
-    }
-
-    /// ロード済みのパイプライン（モデル）をすべて解放する。
-    /// 次回の翻訳時に、必要なペアだけが再ロードされる。
-    pub fn unload_all(&mut self) {
-        self.pipeline_cache.clear();
-    }
-
-    /// 現在ロードされているパイプライン数を返す
-    pub fn loaded_count(&self) -> usize {
-        self.pipeline_cache.len()
     }
 }
 
@@ -180,7 +223,7 @@ mod tests {
     #[test]
     fn test_plan_route() {
         let mut router = TranslationRouter {
-            packages_dir: PathBuf::new(),
+            packages_dir: PathBuf::from("dummy"),
             available_pairs: HashMap::new(),
             pipeline_cache: HashMap::new(),
         };
@@ -220,5 +263,22 @@ mod tests {
 
         // 非対応ペア
         assert!(router.plan_route("ja", "fr").is_err());
+    }
+
+    #[test]
+    fn test_refresh_skips_invalid_package_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        // 壊れた（空の）ディレクトリを作成
+        std::fs::create_dir_all(temp_dir.path().join("broken_model")).unwrap();
+
+        let mut router = TranslationRouter {
+            packages_dir: temp_dir.path().to_path_buf(),
+            available_pairs: HashMap::new(),
+            pipeline_cache: HashMap::new(),
+        };
+
+        // エラーでパニックや中断せず、警告ログを出して空のリストで完了すること
+        assert!(router.refresh_available_packages().is_ok());
+        assert!(router.available_pairs().is_empty());
     }
 }
