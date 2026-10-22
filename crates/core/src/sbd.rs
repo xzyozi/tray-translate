@@ -153,10 +153,7 @@ mod tests {
     fn test_split_japanese_fullwidth_punctuation() {
         let text = "マジで！？本当に！すごいね。";
         let sentences = RuleBasedSentenceSplitter::split(text);
-        assert_eq!(
-            sentences,
-            vec!["マジで！？", "本当に！", "すごいね。"]
-        );
+        assert_eq!(sentences, vec!["マジで！？", "本当に！", "すごいね。"]);
     }
 
     #[test]
@@ -186,10 +183,7 @@ mod tests {
     fn test_split_with_numbers() {
         let text = "The value is 3.14. Next item is 2.5.";
         let sentences = RuleBasedSentenceSplitter::split(text);
-        assert_eq!(
-            sentences,
-            vec!["The value is 3.14.", "Next item is 2.5."]
-        );
+        assert_eq!(sentences, vec!["The value is 3.14.", "Next item is 2.5."]);
     }
 
     #[test]

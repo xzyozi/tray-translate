@@ -86,9 +86,8 @@ impl TranslatorPipeline {
             if sents.is_empty() {
                 translated_lines.push(String::new());
             } else {
-                let line_trans: Vec<String> = (0..sents.len())
-                    .filter_map(|_| trans_iter.next())
-                    .collect();
+                let line_trans: Vec<String> =
+                    (0..sents.len()).filter_map(|_| trans_iter.next()).collect();
                 translated_lines.push(line_trans.join(separator));
             }
         }
