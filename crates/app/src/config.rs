@@ -46,11 +46,28 @@ impl Settings {
     pub fn validate(&self) -> Result<()> {
         Hotkey::parse(&self.hotkey)?;
 
-        if self.source_lang.trim().is_empty() || self.target_lang.trim().is_empty() {
-            return Err(AppError::InvalidSettings(
-                "source_lang and target_lang must not be empty".to_string(),
-            ));
-        }
+        let validate_lang = |lang: &str, field: &str| -> Result<()> {
+            let trimmed = lang.trim();
+            if trimmed.is_empty() {
+                return Err(AppError::InvalidSettings(format!(
+                    "{field} must not be empty"
+                )));
+            }
+            if trimmed.len() > 10
+                || !trimmed
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                return Err(AppError::InvalidSettings(format!(
+                    "Invalid {field} format: '{trimmed}'. Expected standard language code (e.g. 'en', 'ja', 'zh_CN')"
+                )));
+            }
+            Ok(())
+        };
+
+        validate_lang(&self.source_lang, "source_lang")?;
+        validate_lang(&self.target_lang, "target_lang")?;
+
         if self.min_chars == 0 {
             return Err(AppError::InvalidSettings(
                 "min_chars must be at least 1".to_string(),
@@ -186,6 +203,12 @@ mod tests {
         };
         let result = empty_lang.validate();
         assert!(matches!(result, Err(AppError::InvalidSettings(_))));
+
+        let bad_lang_char = Settings {
+            source_lang: "invalid/language!code".to_string(),
+            ..Settings::default()
+        };
+        assert!(bad_lang_char.validate().is_err());
 
         let zero_min = Settings {
             min_chars: 0,

@@ -97,10 +97,8 @@ impl ModelsView {
         if self.active_download_pair.is_some() {
             return;
         }
-        self.active_download_pair = Some(pair.clone());
-        self.download_progress = Some((0, None));
 
-        // Controller 側へ開始を通知
+        // Controller 側へ開始を要求（コントローラが Event::DownloadStarted を返した時点で正本状態が更新される）
         let _ = cmd_tx.send(Command::StartDownload(pair.clone()));
 
         thread::Builder::new()

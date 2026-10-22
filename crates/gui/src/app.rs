@@ -94,7 +94,51 @@ impl GuiApp {
         std::thread::Builder::new()
             .name("translation-worker".to_string())
             .spawn(move || {
-                while let Ok(cmd) = cmd_rx.recv() {
+                while let Ok(mut cmd) = cmd_rx.recv() {
+                    // tick コマンドがキューに溜まっていたら最新のみに集約して無駄な連続処理を間引く
+                    if matches!(cmd, Command::ClipboardTick | Command::IdleTick) {
+                        let mut do_clipboard = matches!(cmd, Command::ClipboardTick);
+                        let mut do_idle = matches!(cmd, Command::IdleTick);
+
+                        while let Ok(next) = cmd_rx.try_recv() {
+                            match next {
+                                Command::ClipboardTick => do_clipboard = true,
+                                Command::IdleTick => do_idle = true,
+                                other => {
+                                    if do_clipboard {
+                                        for ev in controller.handle(Command::ClipboardTick) {
+                                            let _ = event_tx.send(ev);
+                                        }
+                                    }
+                                    if do_idle {
+                                        for ev in controller.handle(Command::IdleTick) {
+                                            let _ = event_tx.send(ev);
+                                        }
+                                    }
+                                    cmd = other;
+                                    do_clipboard = false;
+                                    do_idle = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if do_clipboard {
+                            for ev in controller.handle(Command::ClipboardTick) {
+                                let _ = event_tx.send(ev);
+                            }
+                        }
+                        if do_idle {
+                            for ev in controller.handle(Command::IdleTick) {
+                                let _ = event_tx.send(ev);
+                            }
+                        }
+                        if do_clipboard || do_idle {
+                            egui_ctx.request_repaint();
+                            continue;
+                        }
+                    }
+
                     let events = controller.handle(cmd);
                     let mut has_events = false;
                     for event in events {
@@ -255,6 +299,8 @@ impl GuiApp {
                     }
                 }
                 Event::DownloadStarted { pair } => {
+                    self.models_view.active_download_pair = Some(pair.clone());
+                    self.models_view.download_progress = Some((0, None));
                     self.status = format!("ダウンロードを開始しました: {pair}");
                 }
                 Event::DownloadProgress {
