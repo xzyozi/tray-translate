@@ -45,8 +45,9 @@ fn main() -> Result<()> {
             // 1. 実在するディレクトリパスであればパッケージディレクトリとして開く
             let target_path = Path::new(target);
             if target_path.is_dir() {
-                let package = ModelPackage::open(target_path)
-                    .with_context(|| format!("Failed to open package at {}", target_path.display()))?;
+                let package = ModelPackage::open(target_path).with_context(|| {
+                    format!("Failed to open package at {}", target_path.display())
+                })?;
                 let pipeline = TranslatorPipeline::new(&package)?;
                 let output = pipeline.translate(&text)?;
                 println!("{output}");
@@ -130,9 +131,7 @@ fn main() -> Result<()> {
 
 fn handle_bench(args: &[String]) -> Result<()> {
     if args.len() < 2 {
-        eprintln!(
-            "Usage: tt bench <pair> <sentences.json> [--compare <py_bench.json>]"
-        );
+        eprintln!("Usage: tt bench <pair> <sentences.json> [--compare <py_bench.json>]");
         std::process::exit(1);
     }
 
@@ -144,9 +143,16 @@ fn handle_bench(args: &[String]) -> Result<()> {
         None
     };
 
-    let doc: Value = serde_json::from_str(&fs::read_to_string(sentences_path)
-        .with_context(|| format!("Failed to read sentences file: {}", sentences_path.display()))?)?;
-    let sentences = doc["sentences"].as_array().context("sentences array not found in JSON")?;
+    let doc: Value =
+        serde_json::from_str(&fs::read_to_string(sentences_path).with_context(|| {
+            format!(
+                "Failed to read sentences file: {}",
+                sentences_path.display()
+            )
+        })?)?;
+    let sentences = doc["sentences"]
+        .as_array()
+        .context("sentences array not found in JSON")?;
 
     let parts: Vec<&str> = if target.contains("->") {
         target.split("->").collect()
@@ -177,8 +183,10 @@ fn handle_bench(args: &[String]) -> Result<()> {
     }
 
     if let Some(comp_file) = compare_path {
-        let py_doc: Value = serde_json::from_str(&fs::read_to_string(comp_file)
-            .with_context(|| format!("Failed to read comparison file: {}", comp_file.display()))?)?;
+        let py_doc: Value =
+            serde_json::from_str(&fs::read_to_string(comp_file).with_context(|| {
+                format!("Failed to read comparison file: {}", comp_file.display())
+            })?)?;
         let py_results = py_doc["results"]
             .as_array()
             .context("py results array not found in comparison JSON")?;
