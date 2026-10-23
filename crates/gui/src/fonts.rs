@@ -132,6 +132,23 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "windows")]
+    fn windows_real_font_can_be_installed() {
+        let ctx = egui::Context::default();
+        let loaded = install_japanese_font(&ctx);
+        assert!(
+            loaded.is_some(),
+            "Windows実機で日本語フォント（YuGothM等）が正しく見つかりeguiに登録できること"
+        );
+        let path_str = loaded.unwrap();
+        eprintln!("Windows実機で読み込まれたフォント: {path_str}");
+        assert!(
+            path_str.ends_with(".ttc") || path_str.ends_with(".ttf"),
+            "フォントファイルパスが取得できていること: {path_str}"
+        );
+    }
+
+    #[test]
     fn candidates_have_no_duplicates() {
         let list = candidate_paths();
         let mut sorted = list.clone();
