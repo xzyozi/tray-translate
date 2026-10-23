@@ -17,6 +17,8 @@ pub const BG_FAINT: Color32 = Color32::from_rgb(0x25, 0x25, 0x26);
 /// 本文の文字色
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xE6, 0xE6, 0xE6);
 /// 補助的な文字色（ステータスなど）
+// 現状はコントラストのテストでのみ参照される。ステータス表示（#61）で使う予定のため残す
+#[allow(dead_code)]
 pub const TEXT_WEAK: Color32 = Color32::from_rgb(0x9A, 0x9A, 0x9A);
 /// 強調色（選択、押下状態）。トレイアイコンの青に合わせる
 pub const ACCENT: Color32 = Color32::from_rgb(0x2B, 0x6C, 0xB0);
