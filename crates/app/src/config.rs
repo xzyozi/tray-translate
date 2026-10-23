@@ -56,10 +56,11 @@ impl Settings {
             if trimmed.len() > 10
                 || !trimmed
                     .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
             {
+                // '_' はペアキー (`<from>_<to>`) の区切りのため言語コードに使えない (ADR-005)
                 return Err(AppError::InvalidSettings(format!(
-                    "Invalid {field} format: '{trimmed}'. Expected standard language code (e.g. 'en', 'ja', 'zh_CN')"
+                    "Invalid {field} format: '{trimmed}'. Expected standard language code without '_' (e.g. 'en', 'ja', 'zh-CN')"
                 )));
             }
             Ok(())
@@ -104,8 +105,15 @@ impl Settings {
 
         let json = serde_json::to_string_pretty(self)?;
         let temp_path = path.with_extension("json.tmp");
-        fs::write(&temp_path, format!("{json}\n"))?;
-        fs::rename(&temp_path, path)?;
+        if let Err(error) = fs::write(&temp_path, format!("{json}\n")) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error.into());
+        }
+        if let Err(error) = fs::rename(&temp_path, path) {
+            // 置き換えに失敗した場合は一時ファイルを残さない
+            let _ = fs::remove_file(&temp_path);
+            return Err(error.into());
+        }
         Ok(())
     }
 }
@@ -222,6 +230,39 @@ mod tests {
             ..Settings::default()
         };
         assert!(reversed.validate().is_err());
+    }
+
+    #[test]
+    fn language_code_format_is_validated() {
+        let with_lang = |source: &str, target: &str| Settings {
+            source_lang: source.to_string(),
+            target_lang: target.to_string(),
+            ..Settings::default()
+        };
+
+        // 受理するコード
+        assert!(with_lang("en", "ja").validate().is_ok());
+        assert!(with_lang("zh-CN", "en").validate().is_ok());
+        assert!(with_lang(" en ", "ja").validate().is_ok());
+
+        // 拒否するコード（空・長すぎる・使えない文字。'_' はペアキーの区切りなので不可）
+        assert!(with_lang("en", "zh_CN").validate().is_err());
+        assert!(with_lang("", "ja").validate().is_err());
+        assert!(with_lang("en", "abcdefghijk").validate().is_err());
+        assert!(with_lang("e n", "ja").validate().is_err());
+        assert!(with_lang("en", "ja/x").validate().is_err());
+        assert!(with_lang("日本語", "en").validate().is_err());
+    }
+
+    #[test]
+    fn save_failure_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // 保存先をディレクトリにして rename を失敗させる
+        let path = dir.path().join("settings.json");
+        fs::create_dir(&path).unwrap();
+
+        assert!(Settings::default().save(&path).is_err());
+        assert!(!path.with_extension("json.tmp").exists());
     }
 
     #[test]
