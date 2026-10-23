@@ -161,7 +161,11 @@ mod tests {
 
     #[test]
     fn converts_ctrl_alt_t() {
-        assert_converts_to("Ctrl+Alt+T", Modifiers::CONTROL | Modifiers::ALT, Code::KeyT);
+        assert_converts_to(
+            "Ctrl+Alt+T",
+            Modifiers::CONTROL | Modifiers::ALT,
+            Code::KeyT,
+        );
     }
 
     #[test]

@@ -313,7 +313,8 @@ impl GuiApp {
                 }
                 Event::DownloadStarted { pair } => {
                     // コントローラが受理した時点で、ダウンロード用のスレッドを起動する
-                    self.models_view.on_download_started(&pair, self.cmd_tx.clone(), ctx.clone());
+                    self.models_view
+                        .on_download_started(&pair, self.cmd_tx.clone(), ctx.clone());
                     self.status = format!("ダウンロードを開始しました: {pair}");
                 }
                 Event::DownloadProgress {
@@ -622,7 +623,8 @@ mod tests {
     fn stops_at_first_non_tick_command() {
         let (tx, rx) = channel();
         tx.send(Command::IdleTick).unwrap();
-        tx.send(Command::TranslateText("hello".to_string())).unwrap();
+        tx.send(Command::TranslateText("hello".to_string()))
+            .unwrap();
         tx.send(Command::ClipboardTick).unwrap();
 
         let batch = coalesce_ticks(&Command::ClipboardTick, &rx);
