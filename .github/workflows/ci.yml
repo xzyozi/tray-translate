@@ -79,6 +79,15 @@ jobs:
         shell: bash
         run: bash .github/ci.sh
 
+      # GUI クレートは default-members 外のため ci.sh の clippy/test の対象にならない。
+      # Ubuntu では GUI の依存をビルドしない方針なので、Windows でのみ検証する（fmt は --all で対象）。
+      - name: GUI checks (clippy / test)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo clippy -p tray-translate-gui --all-targets --locked -- -D warnings
+          cargo test -p tray-translate-gui --locked
+
       - name: Run Makefile CI target
         if: steps.detect.outputs.runner == 'make'
         shell: bash
