@@ -223,5 +223,6 @@ Issue記録では、`source_issue`と`snapshot_at`を設定し、元Issueを追�
 - [ADR-003 G3 の合格基準](adr/003-g3-acceptance-criteria.md)
 - [ADR-004 常駐 GUI の技術選定](adr/004-gui-technology-selection.md)
 - [ADR-005 panic 方針と言語コードの前提](adr/005-panic-policy.md)
+- [ADR-006 GUI のマルチプラットフォーム方針と日本語フォントの扱い](adr/006-gui-portability-and-font-policy.md)
 - [GUI 手動テスト・動作確認手順書](test/gui-manual-test-guide.md)
 - [実モデルを使った確認手順（CLI）](test/real-model-verification.md)
