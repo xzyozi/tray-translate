@@ -1,5 +1,5 @@
 use crate::clipboard::ArboardClipboard;
-use crate::fonts::install_japanese_font;
+use crate::fonts::{install_japanese_font, missing_font_message};
 use crate::hotkey::HotkeyManager;
 use crate::models_view::ModelsView;
 use crate::theme;
@@ -200,10 +200,16 @@ impl GuiApp {
             }
         };
 
-        let status = if font.is_none() {
-            "日本語フォントが見つかりません（日本語が四角で表示される場合があります）".to_string()
-        } else {
-            "準備ができました".to_string()
+        let status = match &font {
+            Some(path) => {
+                eprintln!("日本語フォントを読み込みました: {path}");
+                "準備ができました".to_string()
+            }
+            None => {
+                let message = missing_font_message();
+                eprintln!("{message}");
+                message
+            }
         };
 
         Ok(Self {
