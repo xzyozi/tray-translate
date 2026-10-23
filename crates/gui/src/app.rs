@@ -17,6 +17,38 @@ const TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// キューに溜まった tick を 1 回分に集約した結果
+struct TickBatch {
+    /// クリップボード確認を行うか
+    clipboard: bool,
+    /// アイドル解放の確認を行うか
+    idle: bool,
+    /// tick の後ろで最初に見つかった、tick 以外の操作（処理順を保つため、tick の後に実行する）
+    next: Option<Command>,
+}
+
+/// `first`（tick）に続く tick をキューから取り出して集約する。
+/// tick 以外の操作に当たったら、そこで止めて `next` に返す。
+fn coalesce_ticks(first: &Command, rx: &Receiver<Command>) -> TickBatch {
+    let mut batch = TickBatch {
+        clipboard: matches!(first, Command::ClipboardTick),
+        idle: matches!(first, Command::IdleTick),
+        next: None,
+    };
+
+    while let Ok(command) = rx.try_recv() {
+        match command {
+            Command::ClipboardTick => batch.clipboard = true,
+            Command::IdleTick => batch.idle = true,
+            other => {
+                batch.next = Some(other);
+                break;
+            }
+        }
+    }
+    batch
+}
+
 /// 画面タブ
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -95,47 +127,28 @@ impl GuiApp {
             .name("translation-worker".to_string())
             .spawn(move || {
                 while let Ok(mut cmd) = cmd_rx.recv() {
-                    // tick コマンドがキューに溜まっていたら最新のみに集約して無駄な連続処理を間引く
+                    // tick コマンドがキューに溜まっていたら 1 回分に集約して無駄な連続処理を間引く
                     if matches!(cmd, Command::ClipboardTick | Command::IdleTick) {
-                        let mut do_clipboard = matches!(cmd, Command::ClipboardTick);
-                        let mut do_idle = matches!(cmd, Command::IdleTick);
+                        let batch = coalesce_ticks(&cmd, &cmd_rx);
 
-                        while let Ok(next) = cmd_rx.try_recv() {
-                            match next {
-                                Command::ClipboardTick => do_clipboard = true,
-                                Command::IdleTick => do_idle = true,
-                                other => {
-                                    if do_clipboard {
-                                        for ev in controller.handle(Command::ClipboardTick) {
-                                            let _ = event_tx.send(ev);
-                                        }
-                                    }
-                                    if do_idle {
-                                        for ev in controller.handle(Command::IdleTick) {
-                                            let _ = event_tx.send(ev);
-                                        }
-                                    }
-                                    cmd = other;
-                                    do_clipboard = false;
-                                    do_idle = false;
-                                    break;
-                                }
-                            }
+                        let mut ticks = Vec::new();
+                        if batch.clipboard {
+                            ticks.push(Command::ClipboardTick);
                         }
-
-                        if do_clipboard {
-                            for ev in controller.handle(Command::ClipboardTick) {
+                        if batch.idle {
+                            ticks.push(Command::IdleTick);
+                        }
+                        for tick in ticks {
+                            for ev in controller.handle(tick) {
                                 let _ = event_tx.send(ev);
                             }
                         }
-                        if do_idle {
-                            for ev in controller.handle(Command::IdleTick) {
-                                let _ = event_tx.send(ev);
-                            }
-                        }
-                        if do_clipboard || do_idle {
-                            egui_ctx.request_repaint();
-                            continue;
+                        egui_ctx.request_repaint();
+
+                        // tick の後ろに別の操作が続いていたら、それを通常どおり処理する
+                        match batch.next {
+                            Some(next) => cmd = next,
+                            None => continue,
                         }
                     }
 
@@ -261,7 +274,7 @@ impl GuiApp {
     }
 
     /// コントローラからの通知を画面の状態へ反映する
-    fn process_events(&mut self) {
+    fn process_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 Event::Translated { source, output } => {
@@ -299,8 +312,9 @@ impl GuiApp {
                     }
                 }
                 Event::DownloadStarted { pair } => {
-                    self.models_view.active_download_pair = Some(pair.clone());
-                    self.models_view.download_progress = Some((0, None));
+                    // コントローラが受理した時点で、ダウンロード用のスレッドを起動する
+                    self.models_view
+                        .on_download_started(&pair, self.cmd_tx.clone(), ctx.clone());
                     self.status = format!("ダウンロードを開始しました: {pair}");
                 }
                 Event::DownloadProgress {
@@ -319,13 +333,11 @@ impl GuiApp {
                     }
                 }
                 Event::DownloadSucceeded { pair } => {
-                    self.models_view.active_download_pair = None;
-                    self.models_view.download_progress = None;
+                    self.models_view.clear_download();
                     self.status = format!("ダウンロードが完了しました: {pair}");
                 }
                 Event::DownloadFailed { pair, message } => {
-                    self.models_view.active_download_pair = None;
-                    self.models_view.download_progress = None;
+                    self.models_view.clear_download();
                     self.status = format!("ダウンロードに失敗しました: {pair} ({message})");
                 }
                 Event::ModelsRefreshed { available_pairs } => {
@@ -333,6 +345,8 @@ impl GuiApp {
                 }
                 Event::Error { message } => {
                     self.is_translating = false;
+                    // ダウンロード開始の要求が拒否された場合は、待機を取り消す
+                    self.models_view.on_download_rejected();
                     self.status = format!("エラー: {message}");
                 }
             }
@@ -523,7 +537,7 @@ impl GuiApp {
 impl eframe::App for GuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.handle_os_events(ui.ctx());
-        self.process_events();
+        self.process_events(ui.ctx());
         self.run_ticks(ui.ctx());
         self.copy_pending_result(ui.ctx());
 
@@ -569,5 +583,59 @@ impl eframe::App for GuiApp {
             ui.label(&self.status);
             ui.small(format!("導入済みのモデル: {}", self.installed.join(", ")));
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalesces_queued_ticks_into_one_batch() {
+        let (tx, rx) = channel();
+        tx.send(Command::IdleTick).unwrap();
+        tx.send(Command::ClipboardTick).unwrap();
+        tx.send(Command::IdleTick).unwrap();
+
+        let batch = coalesce_ticks(&Command::ClipboardTick, &rx);
+
+        assert!(batch.clipboard);
+        assert!(batch.idle);
+        assert!(batch.next.is_none());
+        // 集約したので、キューは空になる
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn single_tick_only_sets_its_own_flag() {
+        let (_tx, rx) = channel();
+
+        let clipboard = coalesce_ticks(&Command::ClipboardTick, &rx);
+        assert!(clipboard.clipboard);
+        assert!(!clipboard.idle);
+
+        let idle = coalesce_ticks(&Command::IdleTick, &rx);
+        assert!(!idle.clipboard);
+        assert!(idle.idle);
+    }
+
+    #[test]
+    fn stops_at_first_non_tick_command() {
+        let (tx, rx) = channel();
+        tx.send(Command::IdleTick).unwrap();
+        tx.send(Command::TranslateText("hello".to_string()))
+            .unwrap();
+        tx.send(Command::ClipboardTick).unwrap();
+
+        let batch = coalesce_ticks(&Command::ClipboardTick, &rx);
+
+        assert!(batch.clipboard);
+        assert!(batch.idle);
+        assert!(matches!(
+            batch.next,
+            Some(Command::TranslateText(ref text)) if text == "hello"
+        ));
+        // 操作より後ろの tick は取り出さず、次の周回で処理する
+        assert!(matches!(rx.try_recv(), Ok(Command::ClipboardTick)));
     }
 }

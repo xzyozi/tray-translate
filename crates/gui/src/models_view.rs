@@ -24,6 +24,8 @@ pub struct ModelsView {
     pub active_download_pair: Option<String>,
     /// ダウンロード進捗 (downloaded_bytes, total_bytes)
     pub download_progress: Option<(u64, Option<u64>)>,
+    /// 開始を要求し、コントローラの応答（`DownloadStarted` か `Error`）を待っているモデル
+    pending_download: Option<PackageIndexEntry>,
     /// 非同期イベント受信チャネル
     event_rx: Receiver<ModelManagerEvent>,
     event_tx: Sender<ModelManagerEvent>,
@@ -39,6 +41,7 @@ impl ModelsView {
             filter: String::new(),
             active_download_pair: None,
             download_progress: None,
+            pending_download: None,
             event_rx,
             event_tx,
         }
@@ -87,20 +90,47 @@ impl ModelsView {
     }
 
     /// 指定したパッケージのダウンロードとインストールを別スレッドで開始する
-    pub fn start_download(
-        &mut self,
-        entry: PackageIndexEntry,
-        cmd_tx: Sender<Command>,
-        ctx: egui::Context,
-    ) {
-        let pair = format!("{}_{}", entry.from_code, entry.to_code);
-        if self.active_download_pair.is_some() {
+    /// ダウンロードの開始をコントローラへ要求する。
+    ///
+    /// 開始の可否はコントローラが決める。ここでは要求を送って応答を待つだけで、
+    /// ダウンロード用のスレッドは `on_download_started` で起動する。
+    pub fn request_download(&mut self, entry: PackageIndexEntry, cmd_tx: &Sender<Command>) {
+        if self.active_download_pair.is_some() || self.pending_download.is_some() {
             return;
         }
 
-        // Controller 側へ開始を要求（コントローラが Event::DownloadStarted を返した時点で正本状態が更新される）
-        let _ = cmd_tx.send(Command::StartDownload(pair.clone()));
+        let pair = format!("{}_{}", entry.from_code, entry.to_code);
+        if cmd_tx.send(Command::StartDownload(pair)).is_ok() {
+            self.pending_download = Some(entry);
+        }
+    }
 
+    /// コントローラが開始を受理したときに呼ぶ。要求済みのモデルと一致すれば、ダウンロードを始める。
+    pub fn on_download_started(&mut self, pair: &str, tx: Sender<Command>, ctx: egui::Context) {
+        let Some(entry) = self.pending_download.take() else {
+            return;
+        };
+        if format!("{}_{}", entry.from_code, entry.to_code) != pair {
+            return;
+        }
+
+        self.active_download_pair = Some(pair.to_string());
+        self.download_progress = Some((0, None));
+        Self::spawn_download(entry, tx, ctx);
+    }
+
+    /// コントローラが開始を拒否した（`Event::Error`）ときに呼ぶ。待機中の要求を取り消す。
+    pub fn on_download_rejected(&mut self) {
+        self.pending_download = None;
+    }
+
+    /// ダウンロードの表示状態を消す（成功・失敗のとき）
+    pub fn clear_download(&mut self) {
+        self.active_download_pair = None;
+        self.download_progress = None;
+    }
+
+    fn spawn_download(entry: PackageIndexEntry, cmd_tx: Sender<Command>, ctx: egui::Context) {
         thread::Builder::new()
             .name("model-downloader".to_string())
             .spawn(move || {
@@ -233,7 +263,8 @@ impl ModelsView {
                     if filtered_entries.is_empty() {
                         ui.label("一致するモデルがありません。");
                     } else {
-                        let is_downloading_any = self.active_download_pair.is_some();
+                        let is_downloading_any =
+                            self.active_download_pair.is_some() || self.pending_download.is_some();
                         let active_pair = self.active_download_pair.clone();
 
                         egui::Grid::new("models_table")
@@ -283,10 +314,13 @@ impl ModelsView {
             });
 
         if let Some(entry) = to_download {
-            self.start_download(entry, cmd_tx.clone(), ui.ctx().clone());
+            self.request_download(entry, cmd_tx);
         }
 
         ui.separator();
-        ui.small("モデルライセンス表記: Argos Translate Models (Creative Commons Attribution 4.0 International)");
+        ui.small(
+            "モデルのライセンスはパッケージごとに異なる場合があります。\
+             導入したモデルの metadata.json と配布元の表記を確認してください。",
+        );
     }
 }

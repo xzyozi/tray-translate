@@ -141,3 +141,83 @@ fn to_global_hotkey(hotkey: &Hotkey) -> Option<HotKey> {
 
     Some(HotKey::new(Some(mods), code))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 文字列を `Hotkey::parse` で解析し、`to_global_hotkey` で変換する
+    fn convert(input: &str) -> Option<HotKey> {
+        let parsed = Hotkey::parse(input).expect("app 側で解析できる文字列");
+        to_global_hotkey(&parsed)
+    }
+
+    /// 変換結果が期待する修飾キーとコードの `HotKey` と一致することを `id()` で確認する
+    fn assert_converts_to(input: &str, mods: Modifiers, code: Code) {
+        let actual = convert(input).unwrap_or_else(|| panic!("{input} は変換できるはず"));
+        let expected = HotKey::new(Some(mods), code);
+        assert_eq!(actual.id(), expected.id(), "input: {input}");
+    }
+
+    #[test]
+    fn converts_ctrl_alt_t() {
+        assert_converts_to(
+            "Ctrl+Alt+T",
+            Modifiers::CONTROL | Modifiers::ALT,
+            Code::KeyT,
+        );
+    }
+
+    #[test]
+    fn converts_shift_modifier() {
+        assert_converts_to("Shift+A", Modifiers::SHIFT, Code::KeyA);
+    }
+
+    #[test]
+    fn converts_super_modifier_to_meta() {
+        assert_converts_to("Super+Z", Modifiers::META, Code::KeyZ);
+        // 別名 (Win) でも同じ修飾キーになる
+        assert_converts_to("Win+Z", Modifiers::META, Code::KeyZ);
+    }
+
+    #[test]
+    fn converts_all_modifiers_together() {
+        assert_converts_to(
+            "Ctrl+Alt+Shift+Super+Q",
+            Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT | Modifiers::META,
+            Code::KeyQ,
+        );
+    }
+
+    #[test]
+    fn converts_digit_key() {
+        assert_converts_to("Ctrl+1", Modifiers::CONTROL, Code::Digit1);
+        assert_converts_to("Ctrl+0", Modifiers::CONTROL, Code::Digit0);
+    }
+
+    #[test]
+    fn converts_function_key() {
+        assert_converts_to("Ctrl+F5", Modifiers::CONTROL, Code::F5);
+        assert_converts_to("Ctrl+F12", Modifiers::CONTROL, Code::F12);
+    }
+
+    #[test]
+    fn converts_special_keys() {
+        assert_converts_to("Ctrl+Space", Modifiers::CONTROL, Code::Space);
+        assert_converts_to("Ctrl+Enter", Modifiers::CONTROL, Code::Enter);
+        assert_converts_to("Ctrl+Tab", Modifiers::CONTROL, Code::Tab);
+        assert_converts_to("Ctrl+Escape", Modifiers::CONTROL, Code::Escape);
+        // 別名 (Esc / Return) は app 側で正規化される
+        assert_converts_to("Ctrl+Esc", Modifiers::CONTROL, Code::Escape);
+        assert_converts_to("Ctrl+Return", Modifiers::CONTROL, Code::Enter);
+    }
+
+    #[test]
+    fn returns_none_for_function_keys_above_f12() {
+        // app 側は F1〜F24 を受理するが、GUI 側は F1〜F12 のみ対応する
+        for key in ["F13", "F20", "F24"] {
+            let input = format!("Ctrl+{key}");
+            assert!(convert(&input).is_none(), "{input} は変換できないはず");
+        }
+    }
+}
