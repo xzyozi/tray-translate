@@ -15,6 +15,82 @@ use tray_translate_core::TranslationRouter;
 /// クリップボード確認とアイドル解放の確認の間隔
 const TICK_INTERVAL: Duration = Duration::from_secs(1);
 
+/// 左右分割と上下配置の境界幅（ADR-006: 640px 以上で左右分割、未満で上下配置）
+pub const SIDE_BY_SIDE_BREAKPOINT: f32 = 640.0;
+
+/// 画面幅に基づいて左右分割レイアウトを採用するかどうかを判定する。
+pub fn is_side_by_side(window_width: f32) -> bool {
+    window_width >= SIDE_BY_SIDE_BREAKPOINT
+}
+
+/// 導入済みモデルの一覧と現在の設定値から、選択肢として利用可能な言語一覧（重複なし、昇順）を返す。
+///
+/// 導入済みモデルのペアキー（例: `"en_ja"`）から言語コードを取り出す。
+/// もし現在の言語が導入済み一覧に含まれていなくても、設定中の値が消えないよう追加する。
+pub fn collect_available_languages(installed: &[String], current: &str) -> Vec<String> {
+    let mut set = std::collections::BTreeSet::new();
+    for pair in installed {
+        if let Some((from, to)) = pair.split_once('_') {
+            let from_trimmed = from.trim().to_ascii_lowercase();
+            let to_trimmed = to.trim().to_ascii_lowercase();
+            if !from_trimmed.is_empty() {
+                set.insert(from_trimmed);
+            }
+            if !to_trimmed.is_empty() {
+                set.insert(to_trimmed);
+            }
+        }
+    }
+    let cur_trimmed = current.trim().to_ascii_lowercase();
+    if !cur_trimmed.is_empty() {
+        set.insert(cur_trimmed);
+    }
+    set.into_iter().collect()
+}
+
+/// 言語コードを人間にわかりやすい表示名にする。
+pub fn language_display_name(code: &str) -> String {
+    let lower = code.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "ja" => "日本語 (ja)".to_string(),
+        "en" => "英語 (en)".to_string(),
+        "zh" => "中国語 (zh)".to_string(),
+        "es" => "スペイン語 (es)".to_string(),
+        "fr" => "フランス語 (fr)".to_string(),
+        "de" => "ドイツ語 (de)".to_string(),
+        "ko" => "韓国語 (ko)".to_string(),
+        "it" => "イタリア語 (it)".to_string(),
+        "ru" => "ロシア語 (ru)".to_string(),
+        "pt" => "ポルトガル語 (pt)".to_string(),
+        other if other.is_empty() => "未選択".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 言語ドロップダウンを表示するヘルパー。値が変更された場合は true を返す。
+fn render_language_combo(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    current_lang: &mut String,
+    candidates: &[String],
+) -> bool {
+    let mut changed = false;
+    let selected_text = language_display_name(current_lang);
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(selected_text)
+        .show_ui(ui, |ui| {
+            for lang in candidates {
+                let display = language_display_name(lang);
+                let is_selected = current_lang.trim().eq_ignore_ascii_case(lang);
+                if ui.selectable_label(is_selected, display).clicked() && !is_selected {
+                    *current_lang = lang.clone();
+                    changed = true;
+                }
+            }
+        });
+    changed
+}
+
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// キューに溜まった tick を 1 回分に集約した結果
@@ -402,29 +478,62 @@ impl GuiApp {
         required_packages(&self.installed, &from, &to)
     }
 
-    /// 翻訳メイン画面
-    fn render_translate_tab(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label("翻訳元");
-            let src_res =
-                ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(40.0));
-            ui.label("→ 翻訳先");
-            let dst_res =
-                ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(40.0));
+    /// 言語選択ドロップダウン、言語入れ替えボタン、未導入警告を描画する
+    fn render_language_bar(&mut self, ui: &mut egui::Ui, is_wide: bool) {
+        let src_candidates = collect_available_languages(&self.installed, &self.source_lang);
+        let dst_candidates = collect_available_languages(&self.installed, &self.target_lang);
 
-            // 言語入力が変更されたらコントローラの設定へ即時反映する
-            if (src_res.changed()
-                || dst_res.changed()
-                || src_res.lost_focus()
-                || dst_res.lost_focus())
-                && !self.source_lang.trim().is_empty()
-                && !self.target_lang.trim().is_empty()
-            {
+        // 逆方向のモデルが利用可能か判定（ADR-006: 未導入なら入れ替え無効化）
+        let reverse_from = self.target_lang.trim().to_ascii_lowercase();
+        let reverse_to = self.source_lang.trim().to_ascii_lowercase();
+        let reverse_missing = required_packages(&self.installed, &reverse_from, &reverse_to);
+        let can_swap = reverse_missing.is_empty()
+            && !reverse_from.is_empty()
+            && !reverse_to.is_empty()
+            && reverse_from != reverse_to;
+
+        let missing = self.missing_packages();
+
+        ui.horizontal(|ui| {
+            ui.label("翻訳元:");
+            if render_language_combo(ui, "src_lang_combo", &mut self.source_lang, &src_candidates) {
                 self.update_settings();
             }
 
-            let missing = self.missing_packages();
-            if !missing.is_empty() {
+            let swap_btn = egui::Button::new("⇆");
+            let swap_res = if can_swap {
+                ui.add_enabled(can_swap, swap_btn)
+                    .on_hover_text("言語を入れ替える（テキストは保持）")
+            } else if reverse_from == reverse_to && !reverse_from.is_empty() {
+                ui.add_enabled(can_swap, swap_btn)
+                    .on_disabled_hover_text("翻訳元と翻訳先が同じ言語です")
+            } else {
+                let missing_text = if reverse_missing.is_empty() {
+                    "モデルが未設定です".to_string()
+                } else {
+                    format!(
+                        "逆方向（{} → {}）のモデルが未導入です: {}",
+                        reverse_from,
+                        reverse_to,
+                        reverse_missing.join(", ")
+                    )
+                };
+                ui.add_enabled(can_swap, swap_btn)
+                    .on_disabled_hover_text(missing_text)
+            };
+
+            if swap_res.clicked() {
+                std::mem::swap(&mut self.source_lang, &mut self.target_lang);
+                self.update_settings();
+            }
+
+            ui.label("翻訳先:");
+            if render_language_combo(ui, "dst_lang_combo", &mut self.target_lang, &dst_candidates) {
+                self.update_settings();
+            }
+
+            // 画面が広い場合は同じ行に未導入警告を表示
+            if is_wide && !missing.is_empty() {
                 ui.separator();
                 ui.colored_label(theme::WARNING, format!("未導入: {}", missing.join(", ")));
                 if ui.button("モデル管理で取得").clicked() {
@@ -433,14 +542,27 @@ impl GuiApp {
             }
         });
 
-        ui.add_space(4.0);
+        // 画面が狭い場合は未導入警告を次の行に表示
+        if !is_wide && !missing.is_empty() {
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.colored_label(theme::WARNING, format!("未導入: {}", missing.join(", ")));
+                if ui.button("モデル管理で取得").clicked() {
+                    self.active_tab = ActiveTab::Models;
+                }
+            });
+        }
+    }
+
+    /// 原文入力エリアと操作ボタン
+    fn render_source_section(&mut self, ui: &mut egui::Ui, rows: usize) {
         ui.label("翻訳するテキスト");
         ui.add(
             egui::TextEdit::multiline(&mut self.input)
-                .desired_rows(5)
+                .desired_rows(rows)
                 .desired_width(f32::INFINITY),
         );
-
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             let btn_text = if self.is_translating {
                 "翻訳中…"
@@ -454,6 +576,23 @@ impl GuiApp {
                 self.is_translating = true;
                 let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
             }
+            if ui.button("クリア").clicked() {
+                self.input.clear();
+                self.output.clear();
+            }
+        });
+    }
+
+    /// 訳文表示エリアと操作ボタン
+    fn render_target_section(&mut self, ui: &mut egui::Ui, rows: usize) {
+        ui.label("翻訳結果");
+        ui.add(
+            egui::TextEdit::multiline(&mut self.output.as_str())
+                .desired_rows(rows)
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
             if ui.button("結果をコピー").clicked() {
                 let _ = self
                     .cmd_tx
@@ -461,19 +600,45 @@ impl GuiApp {
                 ui.ctx().copy_text(self.output.clone());
                 self.status = "結果をクリップボードにコピーしました".to_string();
             }
-            if ui.button("クリア").clicked() {
-                self.input.clear();
-                self.output.clear();
-            }
         });
+    }
 
-        ui.add_space(4.0);
-        ui.label("翻訳結果");
-        ui.add(
-            egui::TextEdit::multiline(&mut self.output.as_str())
-                .desired_rows(5)
-                .desired_width(f32::INFINITY),
-        );
+    /// 翻訳メイン画面（ADR-006: 640px 以上で左右分割、未満で上下配置）
+    fn render_translate_tab(&mut self, ui: &mut egui::Ui) {
+        let window_width = ui.ctx().input(|i| {
+            i.viewport()
+                .inner_rect
+                .map(|r| r.width())
+                .unwrap_or(ui.available_width())
+        });
+        let is_wide = is_side_by_side(window_width);
+
+        self.render_language_bar(ui, is_wide);
+        ui.add_space(8.0);
+
+        if is_wide {
+            // 左右分割レイアウト (Side-by-Side)
+            let item_spacing = ui.spacing().item_spacing.x;
+            let total_width = ui.available_width();
+            let col_width = ((total_width - item_spacing - 10.0) * 0.5).max(180.0);
+
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui(egui::vec2(col_width, ui.available_height()), |ui| {
+                    self.render_source_section(ui, 8);
+                });
+
+                ui.separator();
+
+                ui.allocate_ui(egui::vec2(col_width, ui.available_height()), |ui| {
+                    self.render_target_section(ui, 8);
+                });
+            });
+        } else {
+            // 上下配置レイアウト (Narrow)
+            self.render_source_section(ui, 4);
+            ui.add_space(8.0);
+            self.render_target_section(ui, 4);
+        }
     }
 
     /// 設定画面
@@ -643,5 +808,60 @@ mod tests {
         ));
         // 操作より後ろの tick は取り出さず、次の周回で処理する
         assert!(matches!(rx.try_recv(), Ok(Command::ClipboardTick)));
+    }
+
+    #[test]
+    fn side_by_side_breakpoint_check() {
+        assert!(is_side_by_side(640.0));
+        assert!(is_side_by_side(800.0));
+        assert!(!is_side_by_side(639.9));
+        assert!(!is_side_by_side(420.0));
+    }
+
+    #[test]
+    fn collect_available_languages_deduplicates_and_sorts() {
+        let installed = vec![
+            "en_ja".to_string(),
+            "ja_en".to_string(),
+            "es_en".to_string(),
+        ];
+        let langs = collect_available_languages(&installed, "en");
+        assert_eq!(langs, vec!["en", "es", "ja"]);
+    }
+
+    #[test]
+    fn collect_available_languages_preserves_current_even_if_not_installed() {
+        let installed = vec!["en_ja".to_string()];
+        let langs = collect_available_languages(&installed, "fr");
+        assert_eq!(langs, vec!["en", "fr", "ja"]);
+    }
+
+    #[test]
+    fn collect_available_languages_handles_empty_or_whitespace() {
+        let installed: Vec<String> = vec![];
+        let langs = collect_available_languages(&installed, "   ");
+        assert!(langs.is_empty());
+    }
+
+    #[test]
+    fn language_display_name_known_and_unknown() {
+        assert_eq!(language_display_name("ja"), "日本語 (ja)");
+        assert_eq!(language_display_name("EN"), "英語 (en)");
+        assert_eq!(language_display_name("es"), "スペイン語 (es)");
+        assert_eq!(language_display_name("xyz"), "xyz");
+        assert_eq!(language_display_name(""), "未選択");
+    }
+
+    #[test]
+    fn swap_availability_logic() {
+        // en_ja のみある場合、ja -> en への逆方向入れ替えは不可
+        let installed = vec!["en_ja".to_string()];
+        let missing_reverse = required_packages(&installed, "ja", "en");
+        assert!(!missing_reverse.is_empty());
+
+        // en_ja と ja_en の両方がある場合、入れ替え可能
+        let installed_both = vec!["en_ja".to_string(), "ja_en".to_string()];
+        let missing_reverse_both = required_packages(&installed_both, "ja", "en");
+        assert!(missing_reverse_both.is_empty());
     }
 }
