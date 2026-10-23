@@ -17,12 +17,38 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # ADR-002: Linux 配布物は Rocky Linux 8 (glibc 2.28) でビルドし、
+          # 新しい glibc の環境でビルドした場合の互換性問題を避ける。
           - os: ubuntu-latest
+            container: rockylinux:8
             asset_name: tray-translate-linux-x86_64.tar.gz
           - os: windows-latest
+            container: ''
             asset_name: tray-translate-windows-x86_64.zip
 
+    # Windows ランナーでは空文字（コンテナなし）
+    container: ${{ matrix.container }}
+
     steps:
+      # コンテナ内には actions が必要とする最小限のツールしか無いため、先に導入する
+      - name: Install build dependencies (Linux / Rocky 8)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          dnf install -y git curl tar gzip make cmake gcc gcc-c++ gcc-toolset-12-gcc gcc-toolset-12-gcc-c++
+          # 標準の gcc 8 は C++17 の対応が不十分なため gcc-toolset-12 を優先する
+          echo "/opt/rh/gcc-toolset-12/root/usr/bin" >> "$GITHUB_PATH"
+          echo "CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc" >> "$GITHUB_ENV"
+          echo "CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain (Linux / Rocky 8)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # バージョンは rust-toolchain.toml で固定され、初回の cargo 実行時に取得される
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -30,13 +56,13 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          cargo build --release --bin tt
+          cargo build --release --locked --bin tt
 
       - name: Build release binaries (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          cargo build --release -p tray-translate-cli -p tray-translate-gui
+          cargo build --release --locked -p tray-translate-cli -p tray-translate-gui
 
       - name: Package binary (Linux)
         if: runner.os == 'Linux'
