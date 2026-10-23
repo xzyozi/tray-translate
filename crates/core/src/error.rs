@@ -38,6 +38,10 @@ pub enum CoreError {
 
     #[error("Unsupported language pair: {0} -> {1}")]
     UnsupportedLanguagePair(String, String),
+
+    /// 利用可能なパッケージ一覧に存在しないペアキー（内部の不整合時のみ到達する）
+    #[error("Unknown package key: {0}")]
+    UnknownPairKey(String),
 }
 
 impl From<ureq::Error> for CoreError {

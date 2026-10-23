@@ -19,5 +19,7 @@ v0.1.0 公開済み。基盤の安定性・安全性強化、および GUI の U
 - 用語集: [CONTEXT.md](CONTEXT.md)
 - ドキュメントガバナンス: [docs/README.md](docs/README.md)
 - 対象プラットフォーム方針: [ADR-002](docs/adr/002-target-platform-and-environment-policy.md)
-- GUI 技術選定: [docs/adr/004-gui-framework-selection.md](docs/adr/004-gui-framework-selection.md)
+- GUI 技術選定: [docs/adr/004-gui-technology-selection.md](docs/adr/004-gui-technology-selection.md)
+- panic 方針と言語コードの前提: [ADR-005](docs/adr/005-panic-policy.md)
+- 実モデルを使った確認手順（CLI）: [docs/test/real-model-verification.md](docs/test/real-model-verification.md)
 - GUI 手動動作確認手順: [docs/test/gui-manual-test-guide.md](docs/test/gui-manual-test-guide.md)

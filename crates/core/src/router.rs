@@ -53,9 +53,13 @@ impl TranslationRouter {
             return Ok(());
         }
 
-        for entry in std::fs::read_dir(&self.packages_dir)? {
-            let entry = entry?;
-            let path = entry.path();
+        // read_dir の順序は OS 依存のため、パス順に並べて重複時の採用(後勝ち)を決定的にする
+        let mut paths = std::fs::read_dir(&self.packages_dir)?
+            .map(|entry| entry.map(|e| e.path()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        paths.sort();
+
+        for path in paths {
             if path.is_dir() {
                 match ModelPackage::open(&path) {
                     Ok(package) => {
@@ -145,14 +149,10 @@ impl TranslationRouter {
     /// 指定した言語ペアキーのパイプラインを取得（キャッシュになければロード）
     fn get_or_load_pipeline(&mut self, pair_key: &str) -> Result<&TranslatorPipeline> {
         if !self.pipeline_cache.contains_key(pair_key) {
-            let path = self.available_pairs.get(pair_key).ok_or_else(|| {
-                let parts: Vec<&str> = pair_key.split('_').collect();
-                if parts.len() == 2 {
-                    CoreError::UnsupportedLanguagePair(parts[0].to_string(), parts[1].to_string())
-                } else {
-                    CoreError::UnsupportedLanguagePair(pair_key.to_string(), String::new())
-                }
-            })?;
+            let path = self
+                .available_pairs
+                .get(pair_key)
+                .ok_or_else(|| CoreError::UnknownPairKey(pair_key.to_string()))?;
 
             info!(pair = %pair_key, path = %path.display(), "Loading pipeline into cache");
             let package = ModelPackage::open(path)?;
@@ -263,6 +263,21 @@ mod tests {
 
         // 非対応ペア
         assert!(router.plan_route("ja", "fr").is_err());
+    }
+
+    #[test]
+    fn test_unknown_pair_key_has_dedicated_error() {
+        let mut router = TranslationRouter {
+            packages_dir: PathBuf::from("dummy"),
+            available_pairs: HashMap::new(),
+            pipeline_cache: HashMap::new(),
+        };
+
+        let result = router.get_or_load_pipeline("not_a_known_pair");
+        assert!(matches!(
+            result,
+            Err(CoreError::UnknownPairKey(key)) if key == "not_a_known_pair"
+        ));
     }
 
     #[test]
