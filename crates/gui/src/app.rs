@@ -62,7 +62,7 @@ pub fn language_display_name(code: &str) -> String {
         "it" => "イタリア語 (it)".to_string(),
         "ru" => "ロシア語 (ru)".to_string(),
         "pt" => "ポルトガル語 (pt)".to_string(),
-        other if other.is_empty() => "未選択".to_string(),
+        "" => "未選択".to_string(),
         other => other.to_string(),
     }
 }
