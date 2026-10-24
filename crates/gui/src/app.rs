@@ -1,6 +1,7 @@
 use crate::clipboard::ArboardClipboard;
 use crate::fonts::{install_japanese_font, missing_font_message};
 use crate::hotkey::HotkeyManager;
+use crate::icons::{self, Icon};
 use crate::models_view::ModelsView;
 use crate::theme;
 use crate::tray::{TrayAction, TrayManager};
@@ -165,6 +166,8 @@ pub struct GuiApp {
     /// 自動コピーする翻訳結果（次のフレームの先頭でクリップボードへ書く）
     to_copy: Option<String>,
     last_tick: Instant,
+    /// 直近にコピーが成功した時刻（コピーボタンの ✓ 表示用）
+    last_copied_at: Option<Instant>,
 }
 
 impl GuiApp {
@@ -312,6 +315,7 @@ impl GuiApp {
             is_quitting: false,
             to_copy: None,
             last_tick: Instant::now(),
+            last_copied_at: None,
         })
     }
 
@@ -469,6 +473,7 @@ impl GuiApp {
                 .cmd_tx
                 .send(Command::NoteClipboardWritten(text.clone()));
             ctx.copy_text(text);
+            self.last_copied_at = Some(Instant::now());
         }
     }
 
@@ -554,53 +559,93 @@ impl GuiApp {
         }
     }
 
-    /// 原文入力エリアと操作ボタン
+    /// 原文入力エリアと操作ボタン（クリアボタンはテキストエリア内右下にインライン配置）
     fn render_source_section(&mut self, ui: &mut egui::Ui, rows: usize) {
         ui.label("翻訳するテキスト");
-        ui.add(
+        let edit_res = ui.add(
             egui::TextEdit::multiline(&mut self.input)
                 .desired_rows(rows)
                 .desired_width(f32::INFINITY),
         );
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let btn_text = if self.is_translating {
-                "翻訳中…"
-            } else {
-                "翻訳"
-            };
-            let btn = ui.add_enabled(!self.is_translating, egui::Button::new(btn_text));
-            if btn.clicked() {
-                self.update_settings();
-                self.status = "翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string();
-                self.is_translating = true;
-                let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
-            }
-            if ui.button("クリア").clicked() {
+
+        // テキストエリア右下にクリア（×）ボタンをインライン配置（テキストがあるときのみ表示）
+        if !self.input.is_empty() {
+            let btn_size = egui::vec2(22.0, 22.0);
+            let btn_rect = egui::Rect::from_min_size(
+                edit_res.rect.max - btn_size - egui::vec2(6.0, 6.0),
+                btn_size,
+            );
+            let clear_clicked = ui
+                .put(btn_rect, |ui: &mut egui::Ui| {
+                    icons::icon_button(ui, Icon::Clear, "入力をクリア")
+                })
+                .clicked();
+            if clear_clicked {
                 self.input.clear();
-                self.output.clear();
             }
-        });
+        }
+
+        ui.add_space(4.0);
+        let btn_text = if self.is_translating {
+            "翻訳中…"
+        } else {
+            "翻訳"
+        };
+        let btn = ui.add_enabled(!self.is_translating, egui::Button::new(btn_text));
+        if btn.clicked() {
+            self.update_settings();
+            self.status = "翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string();
+            self.is_translating = true;
+            let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
+        }
     }
 
-    /// 訳文表示エリアと操作ボタン
+    /// 訳文表示エリアと操作ボタン（コピーボタンはテキストエリア内右下にインライン配置）
     fn render_target_section(&mut self, ui: &mut egui::Ui, rows: usize) {
         ui.label("翻訳結果");
-        ui.add(
+        let edit_res = ui.add(
             egui::TextEdit::multiline(&mut self.output.as_str())
                 .desired_rows(rows)
                 .desired_width(f32::INFINITY),
         );
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if ui.button("結果をコピー").clicked() {
-                let _ = self
-                    .cmd_tx
-                    .send(Command::NoteClipboardWritten(self.output.clone()));
-                ui.ctx().copy_text(self.output.clone());
-                self.status = "結果をクリップボードにコピーしました".to_string();
-            }
+
+        // テキストエリア右下にコピーボタンをインライン配置
+        let is_recent_copied = self
+            .last_copied_at
+            .map(|t| t.elapsed() < Duration::from_secs(2))
+            .unwrap_or(false);
+
+        let (icon, tooltip) = if is_recent_copied {
+            (Icon::Check, "クリップボードにコピーしました！")
+        } else {
+            (Icon::Copy, "結果をクリップボードにコピー")
+        };
+
+        let can_copy = !self.output.is_empty();
+        let btn_size = egui::vec2(22.0, 22.0);
+        let btn_rect = egui::Rect::from_min_size(
+            edit_res.rect.max - btn_size - egui::vec2(6.0, 6.0),
+            btn_size,
+        );
+
+        let copy_res = ui.put(btn_rect, |ui: &mut egui::Ui| {
+            ui.add_enabled_ui(can_copy, |ui| icons::icon_button(ui, icon, tooltip))
+                .inner
         });
+
+        if copy_res.clicked() && can_copy {
+            let _ = self
+                .cmd_tx
+                .send(Command::NoteClipboardWritten(self.output.clone()));
+            ui.ctx().copy_text(self.output.clone());
+            self.status = "結果をクリップボードにコピーしました".to_string();
+            self.last_copied_at = Some(Instant::now());
+        }
+
+        // コピー表示中（2秒以内）ならチェック表示解除のために再描画をスケジュール
+        if is_recent_copied {
+            ui.ctx().request_repaint_after(Duration::from_millis(500));
+        }
     }
 
     /// 翻訳メイン画面（ADR-006: 640px 以上で左右分割、未満で上下配置）
