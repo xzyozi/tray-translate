@@ -74,21 +74,24 @@ fn render_language_combo(
     id_salt: &str,
     current_lang: &mut String,
     candidates: &[String],
+    width: Option<f32>,
 ) -> bool {
     let mut changed = false;
     let selected_text = language_display_name(current_lang);
-    egui::ComboBox::from_id_salt(id_salt)
-        .selected_text(selected_text)
-        .show_ui(ui, |ui| {
-            for lang in candidates {
-                let display = language_display_name(lang);
-                let is_selected = current_lang.trim().eq_ignore_ascii_case(lang);
-                if ui.selectable_label(is_selected, display).clicked() && !is_selected {
-                    *current_lang = lang.clone();
-                    changed = true;
-                }
+    let mut combo = egui::ComboBox::from_id_salt(id_salt).selected_text(selected_text);
+    if let Some(w) = width {
+        combo = combo.width(w);
+    }
+    combo.show_ui(ui, |ui| {
+        for lang in candidates {
+            let display = language_display_name(lang);
+            let is_selected = current_lang.trim().eq_ignore_ascii_case(lang);
+            if ui.selectable_label(is_selected, display).clicked() && !is_selected {
+                *current_lang = lang.clone();
+                changed = true;
             }
-        });
+        }
+    });
     changed
 }
 
@@ -641,25 +644,132 @@ impl GuiApp {
         required_packages(&self.installed, &from, &to)
     }
 
-    /// 言語選択ドロップダウン、言語入れ替えボタン、未導入警告を描画する
-    fn render_language_bar(&mut self, ui: &mut egui::Ui, is_wide: bool) {
-        let src_candidates = collect_available_languages(&self.installed, &self.source_lang);
-        let dst_candidates = collect_available_languages(&self.installed, &self.target_lang);
+    /// 左右分割時の言語選択バー（カラム幅と中央セパレータ位置に完全追従する自動幅調整）
+    #[allow(clippy::too_many_arguments)]
+    fn render_language_bar_wide(
+        &mut self,
+        ui: &mut egui::Ui,
+        col_width: f32,
+        can_swap: bool,
+        reverse_missing: &[String],
+        reverse_from: &str,
+        reverse_to: &str,
+        missing: &[String],
+        src_candidates: &[String],
+        dst_candidates: &[String],
+    ) {
+        ui.horizontal(|ui| {
+            // 左側（原文エリアの上部）: 翻訳元言語 ComboBox（カラム幅いっぱいに自動拡大）
+            ui.allocate_ui(egui::vec2(col_width, 24.0), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("翻訳元:");
+                    let combo_width = (ui.available_width() - 8.0).max(100.0);
+                    if render_language_combo(
+                        ui,
+                        "src_lang_combo",
+                        &mut self.source_lang,
+                        src_candidates,
+                        Some(combo_width),
+                    ) {
+                        self.update_settings();
+                        self.request_tracker.invalidate();
+                        if self.auto_translate && !self.input.trim().is_empty() {
+                            self.pending_auto_translate = Some(Instant::now());
+                        }
+                    }
+                });
+            });
 
-        // 逆方向のモデルが利用可能か判定（ADR-006: 未導入なら入れ替え無効化）
-        let reverse_from = self.target_lang.trim().to_ascii_lowercase();
-        let reverse_to = self.source_lang.trim().to_ascii_lowercase();
-        let reverse_missing = required_packages(&self.installed, &reverse_from, &reverse_to);
-        let can_swap = reverse_missing.is_empty()
-            && !reverse_from.is_empty()
-            && !reverse_to.is_empty()
-            && reverse_from != reverse_to;
+            // 中央（セパレータの上部）: 言語入れ替えボタン
+            let swap_btn = egui::Button::new("⇆");
+            let swap_res = if can_swap {
+                ui.add_enabled(can_swap, swap_btn)
+                    .on_hover_text("言語を入れ替える（テキストは保持）")
+            } else if reverse_from == reverse_to && !reverse_from.is_empty() {
+                ui.add_enabled(can_swap, swap_btn)
+                    .on_disabled_hover_text("翻訳元と翻訳先が同じ言語です")
+            } else {
+                let missing_text = if reverse_missing.is_empty() {
+                    "モデルが未設定です".to_string()
+                } else {
+                    format!(
+                        "逆方向（{} → {}）のモデルが未導入です: {}",
+                        reverse_from,
+                        reverse_to,
+                        reverse_missing.join(", ")
+                    )
+                };
+                ui.add_enabled(can_swap, swap_btn)
+                    .on_disabled_hover_text(missing_text)
+            };
 
-        let missing = self.missing_packages();
+            if swap_res.clicked() {
+                std::mem::swap(&mut self.source_lang, &mut self.target_lang);
+                self.update_settings();
+                self.request_tracker.invalidate();
+                if self.auto_translate && !self.input.trim().is_empty() {
+                    self.pending_auto_translate = Some(Instant::now());
+                }
+            }
 
+            // 右側（訳文エリアの上部）: 翻訳先言語 ComboBox ＆ 未導入警告（右カラム幅に追従）
+            let right_width = ui.available_width();
+            ui.allocate_ui(egui::vec2(right_width, 24.0), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("翻訳先:");
+                    let combo_width = if missing.is_empty() {
+                        (ui.available_width() - 8.0).max(100.0)
+                    } else {
+                        110.0
+                    };
+                    if render_language_combo(
+                        ui,
+                        "dst_lang_combo",
+                        &mut self.target_lang,
+                        dst_candidates,
+                        Some(combo_width),
+                    ) {
+                        self.update_settings();
+                        self.request_tracker.invalidate();
+                        if self.auto_translate && !self.input.trim().is_empty() {
+                            self.pending_auto_translate = Some(Instant::now());
+                        }
+                    }
+
+                    if !missing.is_empty() {
+                        ui.separator();
+                        ui.colored_label(theme::WARNING, format!("未導入: {}", missing.join(", ")));
+                        if ui.button("モデル管理で取得").clicked() {
+                            self.active_tab = ActiveTab::Models;
+                        }
+                    }
+                });
+            });
+        });
+    }
+
+    /// 上下配置時の言語選択バー（Narrow）
+    #[allow(clippy::too_many_arguments)]
+    fn render_language_bar_narrow(
+        &mut self,
+        ui: &mut egui::Ui,
+        can_swap: bool,
+        reverse_missing: &[String],
+        reverse_from: &str,
+        reverse_to: &str,
+        missing: &[String],
+        src_candidates: &[String],
+        dst_candidates: &[String],
+    ) {
         ui.horizontal(|ui| {
             ui.label("翻訳元:");
-            if render_language_combo(ui, "src_lang_combo", &mut self.source_lang, &src_candidates) {
+            if render_language_combo(
+                ui,
+                "src_lang_combo",
+                &mut self.source_lang,
+                src_candidates,
+                Some(110.0),
+            ) {
                 self.update_settings();
                 self.request_tracker.invalidate();
                 if self.auto_translate && !self.input.trim().is_empty() {
@@ -699,26 +809,22 @@ impl GuiApp {
             }
 
             ui.label("翻訳先:");
-            if render_language_combo(ui, "dst_lang_combo", &mut self.target_lang, &dst_candidates) {
+            if render_language_combo(
+                ui,
+                "dst_lang_combo",
+                &mut self.target_lang,
+                dst_candidates,
+                Some(110.0),
+            ) {
                 self.update_settings();
                 self.request_tracker.invalidate();
                 if self.auto_translate && !self.input.trim().is_empty() {
                     self.pending_auto_translate = Some(Instant::now());
                 }
             }
-
-            // 画面が広い場合は同じ行に未導入警告を表示
-            if is_wide && !missing.is_empty() {
-                ui.separator();
-                ui.colored_label(theme::WARNING, format!("未導入: {}", missing.join(", ")));
-                if ui.button("モデル管理で取得").clicked() {
-                    self.active_tab = ActiveTab::Models;
-                }
-            }
         });
 
-        // 画面が狭い場合は未導入警告を次の行に表示
-        if !is_wide && !missing.is_empty() {
+        if !missing.is_empty() {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.colored_label(theme::WARNING, format!("未導入: {}", missing.join(", ")));
@@ -826,7 +932,7 @@ impl GuiApp {
         }
     }
 
-    /// 翻訳メイン画面（ADR-006: 640px 以上で左右分割、未満で上下配置）
+    /// 翻訳メイン画面（ADR-006: 640px 以上で左右分割、未満で上下配置、自動幅調整対応）
     fn render_translate_tab(&mut self, ui: &mut egui::Ui) {
         let window_width = ui.ctx().input(|i| {
             i.viewport()
@@ -836,28 +942,74 @@ impl GuiApp {
         });
         let is_wide = is_side_by_side(window_width);
 
-        self.render_language_bar(ui, is_wide);
-        ui.add_space(8.0);
+        let src_candidates = collect_available_languages(&self.installed, &self.source_lang);
+        let dst_candidates = collect_available_languages(&self.installed, &self.target_lang);
+
+        let reverse_from = self.target_lang.trim().to_ascii_lowercase();
+        let reverse_to = self.source_lang.trim().to_ascii_lowercase();
+        let reverse_missing = required_packages(&self.installed, &reverse_from, &reverse_to);
+        let can_swap = reverse_missing.is_empty()
+            && !reverse_from.is_empty()
+            && !reverse_to.is_empty()
+            && reverse_from != reverse_to;
+
+        let missing = self.missing_packages();
 
         if is_wide {
-            // 左右分割レイアウト (Side-by-Side)
+            // 左右分割レイアウト (Side-by-Side: カラム幅・セパレータ・ドロップダウン連動自動幅調整)
             let item_spacing = ui.spacing().item_spacing.x;
-            let total_width = ui.available_width();
-            let col_width = ((total_width - item_spacing - 10.0) * 0.5).max(180.0);
+            let available_width = ui.available_width();
+            let sep_width = 1.0;
+            let col_width = ((available_width - item_spacing * 2.0 - sep_width) * 0.5)
+                .max(180.0)
+                .floor();
+
+            self.render_language_bar_wide(
+                ui,
+                col_width,
+                can_swap,
+                &reverse_missing,
+                &reverse_from,
+                &reverse_to,
+                &missing,
+                &src_candidates,
+                &dst_candidates,
+            );
+            ui.add_space(6.0);
 
             ui.horizontal_top(|ui| {
-                ui.allocate_ui(egui::vec2(col_width, ui.available_height()), |ui| {
-                    self.render_source_section(ui, 8);
-                });
+                ui.allocate_ui_with_layout(
+                    egui::vec2(col_width, ui.available_height()),
+                    egui::Layout::top_down_justified(egui::Align::Min),
+                    |ui| {
+                        self.render_source_section(ui, 8);
+                    },
+                );
 
                 ui.separator();
 
-                ui.allocate_ui(egui::vec2(col_width, ui.available_height()), |ui| {
-                    self.render_target_section(ui, 8);
-                });
+                let right_width = ui.available_width();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(right_width, ui.available_height()),
+                    egui::Layout::top_down_justified(egui::Align::Min),
+                    |ui| {
+                        self.render_target_section(ui, 8);
+                    },
+                );
             });
         } else {
             // 上下配置レイアウト (Narrow)
+            self.render_language_bar_narrow(
+                ui,
+                can_swap,
+                &reverse_missing,
+                &reverse_from,
+                &reverse_to,
+                &missing,
+                &src_candidates,
+                &dst_candidates,
+            );
+            ui.add_space(8.0);
             self.render_source_section(ui, 4);
             ui.add_space(8.0);
             self.render_target_section(ui, 4);
