@@ -159,6 +159,69 @@ impl AppStatus {
     }
 }
 
+/// 自動翻訳のリクエスト管理と古い結果の破棄（Issue #60 / ADR-006）
+#[derive(Debug, Clone, Default)]
+pub struct RequestTracker {
+    /// 発行済みの最新リクエストID
+    next_id: u64,
+    /// 現在有効な最新のリクエストID（これより古い結果は破棄する）
+    active_id: u64,
+    /// 最後にリクエストしたテキストの内容
+    active_text: String,
+    /// 処理待ちのリクエストキュー: (id, text, is_auto)
+    pending_queue: std::collections::VecDeque<(u64, String, bool)>,
+}
+
+impl RequestTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 新しいリクエストを発行し、そのリクエストIDを返す。
+    pub fn issue_request(&mut self, text: String, is_auto: bool) -> u64 {
+        self.next_id += 1;
+        self.active_id = self.next_id;
+        self.active_text = text.clone();
+        self.pending_queue
+            .push_back((self.active_id, text, is_auto));
+        self.active_id
+    }
+
+    /// 入力が変更されたため、現在進行中のリクエストを無効化する
+    pub fn invalidate(&mut self) {
+        self.next_id += 1;
+        self.active_id = self.next_id;
+        self.active_text.clear();
+    }
+
+    /// 翻訳結果が返ってきたとき、キューの先頭リクエストを取り出して採用可否と is_auto を判定する
+    pub fn on_translated(&mut self, source: &str) -> (bool, bool) {
+        if let Some((id, text, is_auto)) = self.pending_queue.pop_front() {
+            let accept = id == self.active_id && text.trim() == source.trim();
+            (accept, is_auto)
+        } else {
+            // クリップボード監視等、キュー外からの翻訳結果
+            let accept = self.active_text.trim() == source.trim();
+            (accept, false)
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn active_text(&self) -> &str {
+        &self.active_text
+    }
+
+    #[allow(dead_code)]
+    pub fn active_id(&self) -> u64 {
+        self.active_id
+    }
+
+    #[allow(dead_code)]
+    pub fn pending_count(&self) -> usize {
+        self.pending_queue.len()
+    }
+}
+
 /// 翻訳ウィンドウ。制御は別スレッドの `Controller` に任せ、ここでは表示と入力の受け渡しだけを行う。
 pub struct GuiApp {
     cmd_tx: Sender<Command>,
@@ -184,6 +247,14 @@ pub struct GuiApp {
     copy_result: bool,
     min_chars: usize,
     max_chars: usize,
+    /// 入力後に自動翻訳する（ADR-006）
+    auto_translate: bool,
+    /// 入力後自動翻訳のデバウンス待機時間（ミリ秒、ADR-006）
+    auto_translate_delay_ms: u64,
+    /// 翻訳リクエスト追跡（古い結果の破棄用、ADR-006）
+    request_tracker: RequestTracker,
+    /// 自動翻訳のデバウンスタイマー
+    pending_auto_translate: Option<Instant>,
     /// 翻訳処理中かどうかのフラグ
     is_translating: bool,
     /// アプリ終了シーケンス中かどうかのフラグ（CancelClose を抑制する）
@@ -213,6 +284,8 @@ impl GuiApp {
         let copy_result = settings.copy_result;
         let min_chars = settings.min_chars;
         let max_chars = settings.max_chars;
+        let auto_translate = settings.auto_translate;
+        let auto_translate_delay_ms = settings.auto_translate_delay_ms;
 
         let mut controller = Controller::new(
             settings,
@@ -336,6 +409,10 @@ impl GuiApp {
             copy_result,
             min_chars,
             max_chars,
+            auto_translate,
+            auto_translate_delay_ms,
+            request_tracker: RequestTracker::new(),
+            pending_auto_translate: None,
             is_translating: false,
             is_quitting: false,
             to_copy: None,
@@ -390,12 +467,19 @@ impl GuiApp {
             match event {
                 Event::Translated { source, output } => {
                     self.is_translating = false;
+                    let (accept, is_auto) = self.request_tracker.on_translated(&source);
+                    if !accept {
+                        eprintln!("古い翻訳結果（source: {source:?}）を破棄しました");
+                        continue;
+                    }
+
                     let mut status = "翻訳しました".to_string();
                     if self.input.trim() != source.trim() {
                         self.input = source;
                         status = "クリップボードの内容を翻訳しました".to_string();
                     }
-                    if self.copy_result {
+                    // 自動翻訳時はクリップボード自動コピーを行わない（ADR-006）
+                    if !is_auto && self.copy_result {
                         self.to_copy = Some(output.clone());
                         status.push_str("（結果をクリップボードにコピーしました）");
                     }
@@ -484,9 +568,49 @@ impl GuiApp {
             copy_result: self.copy_result,
             min_chars: self.min_chars,
             max_chars: self.max_chars,
+            auto_translate: self.auto_translate,
+            auto_translate_delay_ms: self.auto_translate_delay_ms,
         };
 
         let _ = self.cmd_tx.send(Command::UpdateSettings(settings));
+    }
+
+    /// 翻訳処理を要求する（手動または自動翻訳、ADR-006）
+    fn trigger_translation(&mut self, is_auto: bool) {
+        let text = self.input.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+
+        self.pending_auto_translate = None;
+        let _ = self
+            .request_tracker
+            .issue_request(self.input.clone(), is_auto);
+
+        self.update_settings();
+        self.status =
+            AppStatus::Busy("翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string());
+        self.is_translating = true;
+        let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
+    }
+
+    /// 入力後の自動翻訳デバウンス判定（ADR-006 / Issue #60）
+    fn check_auto_translate(&mut self, ctx: &egui::Context) {
+        if let Some(started_at) = self.pending_auto_translate {
+            if !self.auto_translate || self.input.trim().is_empty() {
+                self.pending_auto_translate = None;
+            } else {
+                let delay = Duration::from_millis(self.auto_translate_delay_ms);
+                let elapsed = started_at.elapsed();
+                if elapsed >= delay {
+                    self.pending_auto_translate = None;
+                    self.trigger_translation(true);
+                } else {
+                    let remaining = delay - elapsed;
+                    ctx.request_repaint_after(remaining);
+                }
+            }
+        }
     }
 
     /// 一定間隔で、クリップボードの確認とアイドル解放の確認を行う
@@ -537,6 +661,10 @@ impl GuiApp {
             ui.label("翻訳元:");
             if render_language_combo(ui, "src_lang_combo", &mut self.source_lang, &src_candidates) {
                 self.update_settings();
+                self.request_tracker.invalidate();
+                if self.auto_translate && !self.input.trim().is_empty() {
+                    self.pending_auto_translate = Some(Instant::now());
+                }
             }
 
             let swap_btn = egui::Button::new("⇆");
@@ -564,11 +692,19 @@ impl GuiApp {
             if swap_res.clicked() {
                 std::mem::swap(&mut self.source_lang, &mut self.target_lang);
                 self.update_settings();
+                self.request_tracker.invalidate();
+                if self.auto_translate && !self.input.trim().is_empty() {
+                    self.pending_auto_translate = Some(Instant::now());
+                }
             }
 
             ui.label("翻訳先:");
             if render_language_combo(ui, "dst_lang_combo", &mut self.target_lang, &dst_candidates) {
                 self.update_settings();
+                self.request_tracker.invalidate();
+                if self.auto_translate && !self.input.trim().is_empty() {
+                    self.pending_auto_translate = Some(Instant::now());
+                }
             }
 
             // 画面が広い場合は同じ行に未導入警告を表示
@@ -602,6 +738,15 @@ impl GuiApp {
                 .desired_width(f32::INFINITY),
         );
 
+        if edit_res.changed() {
+            self.request_tracker.invalidate();
+            if self.auto_translate && !self.input.trim().is_empty() {
+                self.pending_auto_translate = Some(Instant::now());
+            } else {
+                self.pending_auto_translate = None;
+            }
+        }
+
         // テキストエリア右下にクリア（×）ボタンをインライン配置（テキストがあるときのみ表示）
         if !self.input.is_empty() {
             let btn_size = egui::vec2(22.0, 22.0);
@@ -616,6 +761,8 @@ impl GuiApp {
                 .clicked();
             if clear_clicked {
                 self.input.clear();
+                self.request_tracker.invalidate();
+                self.pending_auto_translate = None;
             }
         }
 
@@ -627,11 +774,7 @@ impl GuiApp {
         };
         let btn = ui.add_enabled(!self.is_translating, egui::Button::new(btn_text));
         if btn.clicked() {
-            self.update_settings();
-            self.status =
-                AppStatus::Busy("翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string());
-            self.is_translating = true;
-            let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
+            self.trigger_translation(false);
         }
     }
 
@@ -768,6 +911,20 @@ impl GuiApp {
                 );
                 ui.end_row();
 
+                ui.label("入力後の自動翻訳:");
+                ui.checkbox(&mut self.auto_translate, "タイピング停止後に自動で翻訳する");
+                ui.end_row();
+
+                ui.label("自動翻訳の待機時間:");
+                ui.horizontal(|ui| {
+                    ui.add_enabled(
+                        self.auto_translate,
+                        egui::Slider::new(&mut self.auto_translate_delay_ms, 100..=3000)
+                            .text("ミリ秒 (既定: 800ms)"),
+                    );
+                });
+                ui.end_row();
+
                 ui.label("文字数制限:");
                 ui.horizontal(|ui| {
                     ui.label("最小:");
@@ -828,6 +985,7 @@ impl eframe::App for GuiApp {
         self.handle_os_events(ui.ctx());
         self.process_events(ui.ctx());
         self.run_ticks(ui.ctx());
+        self.check_auto_translate(ui.ctx());
         self.copy_pending_result(ui.ctx());
 
         // ウィンドウが非表示（トレイ格納中）なら CentralPanel を描画しない
@@ -999,5 +1157,57 @@ mod tests {
         let error = AppStatus::Error("エラー発生".to_string());
         assert_eq!(error.message(), "エラー発生");
         assert!(!error.is_busy());
+    }
+
+    #[test]
+    fn request_tracker_basic_flow() {
+        let mut tracker = RequestTracker::new();
+        let id1 = tracker.issue_request("Hello".to_string(), true);
+        assert_eq!(tracker.active_id(), id1);
+        assert_eq!(tracker.pending_count(), 1);
+        assert_eq!(tracker.active_text(), "Hello");
+
+        let (accept, is_auto) = tracker.on_translated("Hello");
+        assert!(accept);
+        assert!(is_auto);
+        assert_eq!(tracker.pending_count(), 0);
+    }
+
+    #[test]
+    fn request_tracker_invalidate_discards_previous() {
+        let mut tracker = RequestTracker::new();
+        let _id1 = tracker.issue_request("Hello".to_string(), true);
+        tracker.invalidate();
+
+        let (accept, _is_auto) = tracker.on_translated("Hello");
+        assert!(!accept);
+    }
+
+    #[test]
+    fn request_tracker_superseded_request_discarded() {
+        let mut tracker = RequestTracker::new();
+        let _id1 = tracker.issue_request("Hello".to_string(), true);
+        let id2 = tracker.issue_request("Hello World".to_string(), true);
+        assert_eq!(tracker.active_id(), id2);
+        assert_eq!(tracker.pending_count(), 2);
+
+        // 1件目の結果到着 -> 古いので破棄
+        let (accept1, _) = tracker.on_translated("Hello");
+        assert!(!accept1);
+
+        // 2件目の結果到着 -> 最新なので採用
+        let (accept2, is_auto) = tracker.on_translated("Hello World");
+        assert!(accept2);
+        assert!(is_auto);
+    }
+
+    #[test]
+    fn request_tracker_text_mismatch_discarded() {
+        let mut tracker = RequestTracker::new();
+        let _id = tracker.issue_request("Hello".to_string(), false);
+
+        // テキスト内容が異なれば破棄
+        let (accept, _) = tracker.on_translated("Different text");
+        assert!(!accept);
     }
 }
