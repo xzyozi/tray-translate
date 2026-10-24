@@ -24,6 +24,10 @@ pub struct Settings {
     pub min_chars: usize,
     /// 翻訳対象とする最大文字数
     pub max_chars: usize,
+    /// 入力後に自動翻訳する（既定: false / ADR-006）
+    pub auto_translate: bool,
+    /// 入力後の自動翻訳デバウンス待機時間（ミリ秒、既定: 800ms / ADR-006）
+    pub auto_translate_delay_ms: u64,
 }
 
 impl Default for Settings {
@@ -37,6 +41,8 @@ impl Default for Settings {
             copy_result: true,
             min_chars: 1,
             max_chars: 5000,
+            auto_translate: false,
+            auto_translate_delay_ms: 800,
         }
     }
 }
@@ -77,6 +83,11 @@ impl Settings {
         if self.min_chars > self.max_chars {
             return Err(AppError::InvalidSettings(
                 "min_chars must not exceed max_chars".to_string(),
+            ));
+        }
+        if self.auto_translate_delay_ms < 100 || self.auto_translate_delay_ms > 10000 {
+            return Err(AppError::InvalidSettings(
+                "auto_translate_delay_ms must be between 100 and 10000".to_string(),
             ));
         }
         Ok(())
@@ -148,12 +159,32 @@ mod tests {
             copy_result: false,
             min_chars: 2,
             max_chars: 100,
+            auto_translate: true,
+            auto_translate_delay_ms: 500,
         };
         settings.save(&path).unwrap();
 
         assert_eq!(Settings::load(&path).unwrap(), settings);
         // 一時ファイルは残らない
         assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn auto_translate_delay_validation() {
+        let mut settings = Settings {
+            auto_translate_delay_ms: 99,
+            ..Settings::default()
+        };
+        assert!(settings.validate().is_err());
+
+        settings.auto_translate_delay_ms = 10001;
+        assert!(settings.validate().is_err());
+
+        settings.auto_translate_delay_ms = 100;
+        assert!(settings.validate().is_ok());
+
+        settings.auto_translate_delay_ms = 10000;
+        assert!(settings.validate().is_ok());
     }
 
     #[test]
