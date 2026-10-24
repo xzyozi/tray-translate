@@ -134,6 +134,31 @@ pub enum ActiveTab {
     Settings,
 }
 
+/// アプリケーションの状態表示種別（ADR-006 / Issue #61）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppStatus {
+    /// 通常・情報メッセージ（準備完了、コピー完了など）
+    Info(String),
+    /// 処理中メッセージ（翻訳中、ダウンロード中など。スピナーを表示）
+    Busy(String),
+    /// エラー・警告メッセージ（エラー色で表示）
+    Error(String),
+}
+
+impl AppStatus {
+    #[allow(dead_code)]
+    pub fn message(&self) -> &str {
+        match self {
+            AppStatus::Info(msg) | AppStatus::Busy(msg) | AppStatus::Error(msg) => msg,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_busy(&self) -> bool {
+        matches!(self, AppStatus::Busy(_))
+    }
+}
+
 /// 翻訳ウィンドウ。制御は別スレッドの `Controller` に任せ、ここでは表示と入力の受け渡しだけを行う。
 pub struct GuiApp {
     cmd_tx: Sender<Command>,
@@ -150,7 +175,7 @@ pub struct GuiApp {
     installed: Vec<String>,
     input: String,
     output: String,
-    status: String,
+    status: AppStatus,
     source_lang: String,
     target_lang: String,
     hotkey_str: String,
@@ -282,12 +307,12 @@ impl GuiApp {
         let status = match &font {
             Some(path) => {
                 eprintln!("日本語フォントを読み込みました: {path}");
-                "準備ができました".to_string()
+                AppStatus::Info("準備ができました".to_string())
             }
             None => {
                 let message = missing_font_message();
                 eprintln!("{message}");
-                message
+                AppStatus::Error(message)
             }
         };
 
@@ -374,34 +399,40 @@ impl GuiApp {
                         self.to_copy = Some(output.clone());
                         status.push_str("（結果をクリップボードにコピーしました）");
                     }
-                    self.status = status;
+                    self.status = AppStatus::Info(status);
                     self.output = output;
                 }
                 Event::TextIgnored => {
                     self.is_translating = false;
-                    self.status = "文字数が範囲外のため翻訳しませんでした".to_string();
+                    self.status =
+                        AppStatus::Info("文字数が範囲外のため翻訳しませんでした".to_string());
                 }
                 Event::ModelsUnloaded => {
-                    self.status = "しばらく使われなかったため、モデルを解放しました".to_string();
+                    self.status = AppStatus::Info(
+                        "しばらく使われなかったため、モデルを解放しました".to_string(),
+                    );
                 }
                 Event::SettingsUpdated { hotkey_changed } => {
                     if hotkey_changed {
                         if let Some(hotkey) = &mut self.hotkey {
                             if let Err(e) = hotkey.register(&self.hotkey_str) {
-                                self.status = format!("ホットキー再登録失敗（旧キーを維持）: {e}");
+                                self.status = AppStatus::Error(format!(
+                                    "ホットキー再登録失敗（旧キーを維持）: {e}"
+                                ));
                             } else {
-                                self.status = "設定とホットキーを更新しました".to_string();
+                                self.status =
+                                    AppStatus::Info("設定とホットキーを更新しました".to_string());
                             }
                         }
                     } else {
-                        self.status = "設定を保存しました".to_string();
+                        self.status = AppStatus::Info("設定を保存しました".to_string());
                     }
                 }
                 Event::DownloadStarted { pair } => {
                     // コントローラが受理した時点で、ダウンロード用のスレッドを起動する
                     self.models_view
                         .on_download_started(&pair, self.cmd_tx.clone(), ctx.clone());
-                    self.status = format!("ダウンロードを開始しました: {pair}");
+                    self.status = AppStatus::Busy(format!("ダウンロードを開始しました: {pair}"));
                 }
                 Event::DownloadProgress {
                     pair,
@@ -412,19 +443,22 @@ impl GuiApp {
                     if let Some(total) = total_bytes {
                         let pct =
                             (downloaded_bytes as f64 / total as f64 * 100.0).clamp(0.0, 100.0);
-                        self.status = format!("ダウンロード中: {pair} ({pct:.0}%)");
+                        self.status =
+                            AppStatus::Busy(format!("ダウンロード中: {pair} ({pct:.0}%)"));
                     } else {
                         let mb = downloaded_bytes as f64 / 1_048_576.0;
-                        self.status = format!("ダウンロード中: {pair} ({mb:.1} MB)");
+                        self.status =
+                            AppStatus::Busy(format!("ダウンロード中: {pair} ({mb:.1} MB)"));
                     }
                 }
                 Event::DownloadSucceeded { pair } => {
                     self.models_view.clear_download();
-                    self.status = format!("ダウンロードが完了しました: {pair}");
+                    self.status = AppStatus::Info(format!("ダウンロードが完了しました: {pair}"));
                 }
                 Event::DownloadFailed { pair, message } => {
                     self.models_view.clear_download();
-                    self.status = format!("ダウンロードに失敗しました: {pair} ({message})");
+                    self.status =
+                        AppStatus::Error(format!("ダウンロードに失敗しました: {pair} ({message})"));
                 }
                 Event::ModelsRefreshed { available_pairs } => {
                     self.installed = available_pairs;
@@ -433,7 +467,7 @@ impl GuiApp {
                     self.is_translating = false;
                     // ダウンロード開始の要求が拒否された場合は、待機を取り消す
                     self.models_view.on_download_rejected();
-                    self.status = format!("エラー: {message}");
+                    self.status = AppStatus::Error(format!("エラー: {message}"));
                 }
             }
         }
@@ -594,7 +628,8 @@ impl GuiApp {
         let btn = ui.add_enabled(!self.is_translating, egui::Button::new(btn_text));
         if btn.clicked() {
             self.update_settings();
-            self.status = "翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string();
+            self.status =
+                AppStatus::Busy("翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string());
             self.is_translating = true;
             let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
         }
@@ -638,7 +673,7 @@ impl GuiApp {
                 .cmd_tx
                 .send(Command::NoteClipboardWritten(self.output.clone()));
             ui.ctx().copy_text(self.output.clone());
-            self.status = "結果をクリップボードにコピーしました".to_string();
+            self.status = AppStatus::Info("結果をクリップボードにコピーしました".to_string());
             self.last_copied_at = Some(Instant::now());
         }
 
@@ -748,6 +783,44 @@ impl GuiApp {
             self.update_settings();
         }
     }
+
+    /// 画面最下部のステータスバー（ADR-006 / Issue #61）
+    fn render_footer(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            // 左側: 状態表示（スピナー/アイコン + メッセージ）
+            match &self.status {
+                AppStatus::Busy(msg) => {
+                    ui.add(egui::Spinner::new().size(12.0));
+                    ui.colored_label(theme::ACCENT, msg);
+                }
+                AppStatus::Error(msg) => {
+                    ui.colored_label(theme::ERROR, "⚠");
+                    ui.colored_label(theme::ERROR, msg);
+                }
+                AppStatus::Info(msg) => {
+                    ui.colored_label(theme::TEXT_WEAK, "●");
+                    ui.colored_label(theme::TEXT_WEAK, msg);
+                }
+            }
+
+            // 右側: 導入済みモデル（長い場合も折り返し/省略でレイアウト破綻を防止）
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let models_text = if self.installed.is_empty() {
+                    "導入済み: なし".to_string()
+                } else {
+                    format!("導入済み: {}", self.installed.join(", "))
+                };
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(models_text)
+                            .size(11.0)
+                            .color(theme::TEXT_WEAK),
+                    )
+                    .truncate(),
+                );
+            });
+        });
+    }
 }
 
 impl eframe::App for GuiApp {
@@ -799,9 +872,8 @@ impl eframe::App for GuiApp {
             ui.add_space(4.0);
             ui.separator();
 
-            // フッター・ステータスバー
-            ui.label(&self.status);
-            ui.small(format!("導入済みのモデル: {}", self.installed.join(", ")));
+            // フッター・ステータスバー（ADR-006 / Issue #61）
+            self.render_footer(ui);
         });
     }
 }
@@ -912,5 +984,20 @@ mod tests {
         let installed_both = vec!["en_ja".to_string(), "ja_en".to_string()];
         let missing_reverse_both = required_packages(&installed_both, "ja", "en");
         assert!(missing_reverse_both.is_empty());
+    }
+
+    #[test]
+    fn app_status_properties() {
+        let info = AppStatus::Info("準備完了".to_string());
+        assert_eq!(info.message(), "準備完了");
+        assert!(!info.is_busy());
+
+        let busy = AppStatus::Busy("翻訳中…".to_string());
+        assert_eq!(busy.message(), "翻訳中…");
+        assert!(busy.is_busy());
+
+        let error = AppStatus::Error("エラー発生".to_string());
+        assert_eq!(error.message(), "エラー発生");
+        assert!(!error.is_busy());
     }
 }
