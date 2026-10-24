@@ -6,7 +6,7 @@ ssot_scope: "test_evidence"
 status: "approved"
 version: "1.0"
 created_at: "2026-10-21"
-updated_at: "2026-10-21"
+updated_at: "2026-10-24"
 author: "tray-translate team"
 owner: "tray-translate team"
 purpose: "Windows 実機環境において tray-translate-gui の全機能を網羅的に手動検証するための手順と合否判定基準を規定する"
@@ -185,9 +185,11 @@ cargo run --release -p tray-translate-gui
 
 1. **トレイメニューからの終了**:
    - トレイアイコンを右クリックし、「終了」をクリックする。
-2. **完全終了の確認**:
+2. **ウィンドウヘッダーからの終了**:
+   - ウィンドウ右上の「終了」ボタンをクリックする。
+3. **完全終了の確認**:
    - ウィンドウおよびトレイアイコンが消失すること。
-   - PowerShell またはタスクマネージャー等でプロセス（`tray-translate-gui.exe`）が残存せず、完全に終了したことを確認する。
+   - PowerShell またはタスクマネージャー等でプロセス（`tt-gui.exe`）が残存せず、完全に終了したことを確認する。
 
 ---
 

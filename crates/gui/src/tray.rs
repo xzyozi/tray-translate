@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::sync::mpsc::{channel, Receiver};
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -18,6 +19,7 @@ pub enum TrayAction {
 /// トレイアイコンの管理。Drop されるとトレイアイコンが削除されるため保持する。
 pub struct TrayManager {
     _tray_icon: TrayIcon,
+    action_rx: Receiver<TrayAction>,
 }
 
 impl TrayManager {
@@ -39,53 +41,58 @@ impl TrayManager {
             .with_icon(icon)
             .build()?;
 
-        // トレイイベント発生時にバックグラウンドのウィンドウを起床させる
+        let (action_tx, action_rx) = channel();
+
+        // トレイイベント発生時にキューへ格納し、バックグラウンドのウィンドウを起床させる
+        // ※ tray-icon および muda では set_event_handler(Some(...)) を設定すると
+        //   TrayIconEvent::receiver() や MenuEvent::receiver() への送信が行われなくなるため、
+        //   自前のチャネルに送信して管理する。
+        let tx_tray = action_tx.clone();
         let ctx_tray = ctx.clone();
-        TrayIconEvent::set_event_handler(Some(move |_| {
-            ctx_tray.request_repaint();
+        TrayIconEvent::set_event_handler(Some(move |event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => {
+                let _ = tx_tray.send(TrayAction::Show);
+                ctx_tray.request_repaint();
+            }
+            _ => {}
         }));
 
+        let tx_menu = action_tx;
         let ctx_menu = ctx;
-        MenuEvent::set_event_handler(Some(move |_| {
-            ctx_menu.request_repaint();
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            if event.id.as_ref() == "show" {
+                let _ = tx_menu.send(TrayAction::Show);
+                ctx_menu.request_repaint();
+            } else if event.id.as_ref() == "quit" {
+                let _ = tx_menu.send(TrayAction::Quit);
+                ctx_menu.request_repaint();
+            }
         }));
 
         Ok(Self {
             _tray_icon: tray_icon,
+            action_rx,
         })
     }
 
     /// トレイ関連のイベント（アイコンクリック、メニュー選択）をポーリングする
     pub fn poll_events(&self) -> Option<TrayAction> {
-        // メニューのクリックイベント
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if event.id.as_ref() == "show" {
-                return Some(TrayAction::Show);
-            }
-            if event.id.as_ref() == "quit" {
+        let mut last_action = None;
+        while let Ok(action) = self.action_rx.try_recv() {
+            if action == TrayAction::Quit {
                 return Some(TrayAction::Quit);
             }
+            last_action = Some(action);
         }
-
-        // トレイアイコン本体のクリックイベント（左クリックでウィンドウ表示）
-        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            match event {
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-                | TrayIconEvent::DoubleClick {
-                    button: MouseButton::Left,
-                    ..
-                } => {
-                    return Some(TrayAction::Show);
-                }
-                _ => {}
-            }
-        }
-
-        None
+        last_action
     }
 }
 

@@ -722,6 +722,10 @@ impl eframe::App for GuiApp {
             ui.horizontal(|ui| {
                 ui.heading("tray-translate");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("終了").clicked() {
+                        self.is_quitting = true;
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                     if self.tray.is_some() && ui.button("トレイに隠す").clicked() {
                         ui.ctx()
                             .send_viewport_cmd(egui::ViewportCommand::Visible(false));
