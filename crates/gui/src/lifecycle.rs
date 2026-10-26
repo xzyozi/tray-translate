@@ -40,7 +40,10 @@ mod tests {
 
     #[test]
     fn hides_only_when_enabled_active_and_not_quitting() {
-        assert_eq!(on_close_requested(true, true, false), CloseAction::HideToTray);
+        assert_eq!(
+            on_close_requested(true, true, false),
+            CloseAction::HideToTray
+        );
     }
 
     #[test]
