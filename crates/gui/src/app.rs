@@ -1,8 +1,8 @@
 use crate::clipboard::ArboardClipboard;
 use crate::fonts::{install_japanese_font, missing_font_message};
 use crate::hotkey::HotkeyManager;
-use crate::lifecycle::{can_hide_to_tray, on_close_requested, CloseAction};
 use crate::icons::{self, Icon};
+use crate::lifecycle::{can_hide_to_tray, on_close_requested, CloseAction};
 use crate::models_view::ModelsView;
 use crate::theme;
 use crate::tray::{TrayAction, TrayManager};
