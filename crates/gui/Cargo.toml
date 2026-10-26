@@ -8,17 +8,27 @@ license.workspace = true
 name = "tt-gui"
 path = "src/main.rs"
 
+# OS 依存の機能は feature で切り離せる（ADR-007）。既定はすべて有効。
+# 無効にすると、対応するモジュールは常に失敗するスタブに置き換わる。
+#   cargo build -p tray-translate-gui --no-default-features
+[features]
+default = ["tray", "hotkey"]
+# タスクトレイ常駐（tray-icon）
+tray = ["dep:tray-icon"]
+# グローバルホットキー（global-hotkey）
+hotkey = ["dep:global-hotkey"]
+
 [dependencies]
 tray-translate-core = { path = "../core" }
 tray-translate-app = { path = "../app" }
 eframe = "0.36"
 # クリップボードはテキストだけ扱う（画像対応の依存は入れない）
 arboard = { version = "3", default-features = false }
-global-hotkey = "0.9"
+global-hotkey = { version = "0.9", optional = true }
 
 # システムトレイ (Linux では ksni バックエンドで GTK 依存を回避)
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-tray-icon = "0.26"
+tray-icon = { version = "0.26", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tray-icon = { version = "0.26", features = ["ksni"], default-features = false }
+tray-icon = { version = "0.26", features = ["ksni"], default-features = false, optional = true }

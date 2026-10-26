@@ -3,11 +3,20 @@
 mod app;
 mod clipboard;
 mod fonts;
+// OS 依存の機能は feature で切り離せる。無効のときは同じ API のスタブに差し替える（ADR-007）
+#[cfg(feature = "hotkey")]
+mod hotkey;
+#[cfg(not(feature = "hotkey"))]
+#[path = "hotkey_stub.rs"]
 mod hotkey;
 mod icons;
 mod lifecycle;
 mod models_view;
 mod theme;
+#[cfg(feature = "tray")]
+mod tray;
+#[cfg(not(feature = "tray"))]
+#[path = "tray_stub.rs"]
 mod tray;
 
 use eframe::egui;
