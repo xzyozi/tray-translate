@@ -2,6 +2,7 @@ use crate::clipboard::ArboardClipboard;
 use crate::fonts::{install_japanese_font, missing_font_message};
 use crate::hotkey::HotkeyManager;
 use crate::icons::{self, Icon};
+use crate::lifecycle::{can_hide_to_tray, on_close_requested, CloseAction};
 use crate::models_view::ModelsView;
 use crate::theme;
 use crate::tray::{TrayAction, TrayManager};
@@ -254,6 +255,8 @@ pub struct GuiApp {
     auto_translate: bool,
     /// 入力後自動翻訳のデバウンス待機時間（ミリ秒、ADR-006）
     auto_translate_delay_ms: u64,
+    /// 「×」でトレイに常駐するか（ADR-007）。トレイアイコンの作成は起動時のみ行う
+    use_tray: bool,
     /// 翻訳リクエスト追跡（古い結果の破棄用、ADR-006）
     request_tracker: RequestTracker,
     /// 自動翻訳のデバウンスタイマー
@@ -289,6 +292,7 @@ impl GuiApp {
         let max_chars = settings.max_chars;
         let auto_translate = settings.auto_translate;
         let auto_translate_delay_ms = settings.auto_translate_delay_ms;
+        let use_tray = settings.use_tray;
 
         let mut controller = Controller::new(
             settings,
@@ -346,13 +350,17 @@ impl GuiApp {
                 }
             })?;
 
-        // トレイアイコンの初期化（失敗しても通常ウィンドウとして動作）
-        let tray = match TrayManager::new(cc.egui_ctx.clone()) {
-            Ok(t) => Some(t),
-            Err(e) => {
-                eprintln!("トレイアイコンの初期化をスキップしました: {e}");
-                None
+        // トレイアイコンの初期化（設定で無効なら作らない。失敗しても通常ウィンドウとして動作）
+        let tray = if use_tray {
+            match TrayManager::new(cc.egui_ctx.clone()) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    eprintln!("トレイアイコンの初期化をスキップしました: {e}");
+                    None
+                }
             }
+        } else {
+            None
         };
 
         // バックグラウンドで定期的にクリップボード確認・アイドル解放の tick を送信
@@ -414,6 +422,7 @@ impl GuiApp {
             max_chars,
             auto_translate,
             auto_translate_delay_ms,
+            use_tray,
             request_tracker: RequestTracker::new(),
             pending_auto_translate: None,
             is_translating: false,
@@ -454,13 +463,18 @@ impl GuiApp {
             }
         }
 
-        // 3. ウィンドウの「×」ボタン押下をインターセプト
-        if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_some() && !self.is_quitting
-        {
-            // トレイアイコンが存在し終了フラグが立っていない場合は、終了せずにウィンドウを隠す
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            self.is_window_visible = false;
+        // 3. ウィンドウの「×」ボタン押下をインターセプト（判断は lifecycle に集約、ADR-007）
+        if ctx.input(|i| i.viewport().close_requested()) {
+            match on_close_requested(self.use_tray, self.tray.is_some(), self.is_quitting) {
+                CloseAction::HideToTray => {
+                    // 終了せずにウィンドウを隠す
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    self.is_window_visible = false;
+                }
+                // そのまま閉じる（プロセスを終了する）
+                CloseAction::Quit => {}
+            }
         }
     }
 
@@ -573,6 +587,7 @@ impl GuiApp {
             max_chars: self.max_chars,
             auto_translate: self.auto_translate,
             auto_translate_delay_ms: self.auto_translate_delay_ms,
+            use_tray: self.use_tray,
         };
 
         let _ = self.cmd_tx.send(Command::UpdateSettings(settings));
@@ -1077,6 +1092,15 @@ impl GuiApp {
                 });
                 ui.end_row();
 
+                ui.label("トレイ常駐:");
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut self.use_tray, "「×」でタスクトレイに常駐する");
+                    ui.small(
+                        "オフにすると「×」で終了します。トレイアイコンの表示切替は再起動後に反映されます",
+                    );
+                });
+                ui.end_row();
+
                 ui.label("文字数制限:");
                 ui.horizontal(|ui| {
                     ui.label("最小:");
@@ -1154,7 +1178,9 @@ impl eframe::App for GuiApp {
                         self.is_quitting = true;
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    if self.tray.is_some() && ui.button("トレイに隠す").clicked() {
+                    if can_hide_to_tray(self.use_tray, self.tray.is_some())
+                        && ui.button("トレイに隠す").clicked()
+                    {
                         ui.ctx()
                             .send_viewport_cmd(egui::ViewportCommand::Visible(false));
                         self.is_window_visible = false;

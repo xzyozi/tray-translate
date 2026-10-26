@@ -5,6 +5,7 @@ mod clipboard;
 mod fonts;
 mod hotkey;
 mod icons;
+mod lifecycle;
 mod models_view;
 mod theme;
 mod tray;

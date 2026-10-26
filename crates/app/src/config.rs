@@ -28,6 +28,18 @@ pub struct Settings {
     pub auto_translate: bool,
     /// 入力後の自動翻訳デバウンス待機時間（ミリ秒、既定: 800ms / ADR-006）
     pub auto_translate_delay_ms: u64,
+    /// 「×」ボタンでタスクトレイに常駐するか。false なら「×」でプロセスを終了する。
+    /// 既定値は OS で異なる（[`default_use_tray`] / ADR-007）。
+    pub use_tray: bool,
+}
+
+/// `use_tray` の既定値。
+///
+/// Linux はトレイを表示しない環境（Wayland / GNOME 標準など）があり、
+/// 「×」で隠すとウィンドウへ戻れなくなるため、既定では常駐しない。
+/// それ以外の OS は従来どおりトレイに常駐する。
+pub fn default_use_tray() -> bool {
+    !cfg!(target_os = "linux")
 }
 
 impl Default for Settings {
@@ -43,6 +55,7 @@ impl Default for Settings {
             max_chars: 5000,
             auto_translate: false,
             auto_translate_delay_ms: 800,
+            use_tray: default_use_tray(),
         }
     }
 }
@@ -161,6 +174,7 @@ mod tests {
             max_chars: 100,
             auto_translate: true,
             auto_translate_delay_ms: 500,
+            use_tray: !default_use_tray(),
         };
         settings.save(&path).unwrap();
 
@@ -216,6 +230,31 @@ mod tests {
         assert_eq!(settings.max_chars, Settings::default().max_chars);
         // 項目が追加される前の設定ファイルでも、自動コピーは既定値（有効）になる
         assert!(settings.copy_result);
+        // use_tray が無い設定ファイルでは、OS ごとの既定値になる（ADR-007）
+        assert_eq!(settings.use_tray, default_use_tray());
+    }
+
+    #[test]
+    fn use_tray_default_follows_os() {
+        // Linux はトレイが見えない環境があるため常駐しない。それ以外は常駐する
+        if cfg!(target_os = "linux") {
+            assert!(!default_use_tray());
+        } else {
+            assert!(default_use_tray());
+        }
+        assert_eq!(Settings::default().use_tray, default_use_tray());
+    }
+
+    #[test]
+    fn explicit_use_tray_overrides_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        fs::write(&path, r#"{ "use_tray": false }"#).unwrap();
+        assert!(!Settings::load(&path).unwrap().use_tray);
+
+        fs::write(&path, r#"{ "use_tray": true }"#).unwrap();
+        assert!(Settings::load(&path).unwrap().use_tray);
     }
 
     #[test]
