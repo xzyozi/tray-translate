@@ -80,13 +80,34 @@ jobs:
         run: bash .github/ci.sh
 
       # GUI クレートは default-members 外のため ci.sh の clippy/test の対象にならない。
-      # Ubuntu では GUI の依存をビルドしない方針なので、Windows でのみ検証する（fmt は --all で対象）。
+      # Windows は既定の構成を、Ubuntu は既定の構成と OS 依存機能を切った構成の両方を検証する
+      # （ADR-007。fmt は --all で対象）。
       - name: GUI checks (clippy / test)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           cargo clippy -p tray-translate-gui --all-targets --locked -- -D warnings
           cargo test -p tray-translate-gui --locked
+      # eframe を Linux でビルドするための開発パッケージ（egui の README に記載のもの）。
+      # 不要と分かったら外してよい。
+      - name: Install GUI build dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      - name: GUI checks (clippy / test, Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo clippy -p tray-translate-gui --all-targets --locked -- -D warnings
+          cargo test -p tray-translate-gui --locked
+      - name: GUI checks without tray / hotkey (clippy / test, Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo clippy -p tray-translate-gui --all-targets --locked --no-default-features -- -D warnings
+          cargo test -p tray-translate-gui --locked --no-default-features
 
       - name: Run Makefile CI target
         if: steps.detect.outputs.runner == 'make'
