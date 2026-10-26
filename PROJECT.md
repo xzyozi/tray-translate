@@ -22,5 +22,6 @@ v0.1.0 公開済み。基盤の安定性・安全性強化、および GUI の U
 - GUI 技術選定: [docs/adr/004-gui-technology-selection.md](docs/adr/004-gui-technology-selection.md)
 - panic 方針と言語コードの前提: [ADR-005](docs/adr/005-panic-policy.md)
 - GUI のマルチプラットフォーム方針と日本語フォントの扱い: [ADR-006](docs/adr/006-gui-portability-and-font-policy.md)
+- GUI のプラットフォーム依存処理の境界とウィンドウのライフサイクル: [ADR-007](docs/adr/007-gui-platform-boundary-and-window-lifecycle.md)
 - 実モデルを使った確認手順（CLI）: [docs/test/real-model-verification.md](docs/test/real-model-verification.md)
 - GUI 手動動作確認手順: [docs/test/gui-manual-test-guide.md](docs/test/gui-manual-test-guide.md)
