@@ -235,7 +235,11 @@ mod tests {
     }
 
     fn sources(history: &History) -> Vec<&str> {
-        history.entries().iter().map(|e| e.source.as_str()).collect()
+        history
+            .entries()
+            .iter()
+            .map(|e| e.source.as_str())
+            .collect()
     }
 
     #[test]
