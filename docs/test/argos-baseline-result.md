@@ -6,12 +6,12 @@ ssot_scope: "test_evidence"
 status: "approved"
 version: "1.0"
 created_at: "2026-10-20"
-updated_at: "2026-10-20"
+updated_at: "2026-10-27"
 author: "xzyozi"
 owner: "xzyozi"
 purpose: "Issue #4 の計測結果と G1 判定を記録し、Rust コア実装の速度・品質の基準値とするため"
 related_documents:
-  - "ADR-002 対象プラットフォームと環境非依存方針（相対パス: ../adr/002-target-platform-and-environment-independence.md）"
+  - "ADR-002 対象プラットフォームと環境非依存方針（相対パス: ../adr/002-target-platform-and-environment-policy.md）"
   - "テスト文セット（相対パス: ../testdata/sentences.json）"
 ---
 
