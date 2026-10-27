@@ -31,7 +31,18 @@ pub struct Settings {
     /// 「×」ボタンでタスクトレイに常駐するか。false なら「×」でプロセスを終了する。
     /// 既定値は OS で異なる（[`default_use_tray`] / ADR-007）。
     pub use_tray: bool,
+    /// 履歴に残す最大件数。0 は履歴を記録しない（既定: 200 / Issue #89）
+    pub history_max_entries: usize,
+    /// 自動翻訳の結果を履歴に確定するまでの待機時間（ミリ秒、既定: 3000ms / Issue #89）
+    pub history_commit_delay_ms: u64,
 }
+
+/// `history_max_entries` の上限値
+pub const MAX_HISTORY_ENTRIES: usize = 1000;
+
+/// `history_commit_delay_ms` の下限と上限（ミリ秒）
+pub const MIN_HISTORY_COMMIT_DELAY_MS: u64 = 500;
+pub const MAX_HISTORY_COMMIT_DELAY_MS: u64 = 30000;
 
 /// `use_tray` の既定値。
 ///
@@ -56,6 +67,8 @@ impl Default for Settings {
             auto_translate: false,
             auto_translate_delay_ms: 800,
             use_tray: default_use_tray(),
+            history_max_entries: 200,
+            history_commit_delay_ms: 3000,
         }
     }
 }
@@ -102,6 +115,18 @@ impl Settings {
             return Err(AppError::InvalidSettings(
                 "auto_translate_delay_ms must be between 100 and 10000".to_string(),
             ));
+        }
+        if self.history_max_entries > MAX_HISTORY_ENTRIES {
+            return Err(AppError::InvalidSettings(format!(
+                "history_max_entries must be between 0 and {MAX_HISTORY_ENTRIES}"
+            )));
+        }
+        if self.history_commit_delay_ms < MIN_HISTORY_COMMIT_DELAY_MS
+            || self.history_commit_delay_ms > MAX_HISTORY_COMMIT_DELAY_MS
+        {
+            return Err(AppError::InvalidSettings(format!(
+                "history_commit_delay_ms must be between {MIN_HISTORY_COMMIT_DELAY_MS} and {MAX_HISTORY_COMMIT_DELAY_MS}"
+            )));
         }
         Ok(())
     }
@@ -175,6 +200,8 @@ mod tests {
             auto_translate: true,
             auto_translate_delay_ms: 500,
             use_tray: !default_use_tray(),
+            history_max_entries: 50,
+            history_commit_delay_ms: 1000,
         };
         settings.save(&path).unwrap();
 
@@ -199,6 +226,53 @@ mod tests {
 
         settings.auto_translate_delay_ms = 10000;
         assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn history_settings_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.history_max_entries, 200);
+        assert_eq!(settings.history_commit_delay_ms, 3000);
+    }
+
+    #[test]
+    fn history_max_entries_validation() {
+        let with_max = |max: usize| Settings {
+            history_max_entries: max,
+            ..Settings::default()
+        };
+        // 0 は「記録しない」として有効
+        assert!(with_max(0).validate().is_ok());
+        assert!(with_max(MAX_HISTORY_ENTRIES).validate().is_ok());
+        assert!(with_max(MAX_HISTORY_ENTRIES + 1).validate().is_err());
+    }
+
+    #[test]
+    fn history_commit_delay_validation() {
+        let with_delay = |ms: u64| Settings {
+            history_commit_delay_ms: ms,
+            ..Settings::default()
+        };
+        assert!(with_delay(MIN_HISTORY_COMMIT_DELAY_MS - 1)
+            .validate()
+            .is_err());
+        assert!(with_delay(MIN_HISTORY_COMMIT_DELAY_MS).validate().is_ok());
+        assert!(with_delay(MAX_HISTORY_COMMIT_DELAY_MS).validate().is_ok());
+        assert!(with_delay(MAX_HISTORY_COMMIT_DELAY_MS + 1)
+            .validate()
+            .is_err());
+    }
+
+    #[test]
+    fn file_without_history_settings_uses_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // 履歴の項目が追加される前の設定ファイルでも、既定値で読み込める
+        fs::write(&path, r#"{ "target_lang": "en" }"#).unwrap();
+
+        let settings = Settings::load(&path).unwrap();
+        assert_eq!(settings.history_max_entries, 200);
+        assert_eq!(settings.history_commit_delay_ms, 3000);
     }
 
     #[test]

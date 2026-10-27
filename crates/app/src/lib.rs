@@ -7,6 +7,7 @@ pub mod clipboard;
 pub mod config;
 pub mod controller;
 pub mod error;
+pub mod history;
 pub mod hotkey;
 pub mod models;
 pub mod paths;
@@ -16,10 +17,11 @@ pub use clipboard::{ClipboardSource, ClipboardWatcher};
 pub use config::Settings;
 pub use controller::{Command, Controller, Event};
 pub use error::{AppError, Result};
+pub use history::{History, HistoryEntry};
 pub use hotkey::{Hotkey, Modifier};
 pub use models::{
     installed_models, parse_pair_key, required_packages, DownloadState, DownloadTracker,
     InstalledModel,
 };
-pub use paths::{get_config_dir, get_settings_path, resolve_config_dir};
+pub use paths::{get_config_dir, get_history_path, get_settings_path, resolve_config_dir};
 pub use service::{Clock, ServiceConfig, SystemClock, Translate, TranslationService};

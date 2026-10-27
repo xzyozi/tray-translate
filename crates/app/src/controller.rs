@@ -1,6 +1,7 @@
 use crate::clipboard::{ClipboardSource, ClipboardWatcher};
 use crate::config::Settings;
 use crate::error::Result;
+use crate::history::{History, HistoryEntry};
 use crate::hotkey::Hotkey;
 use crate::models::{parse_pair_key, required_packages, DownloadState, DownloadTracker};
 use crate::service::{Clock, ServiceConfig, Translate, TranslationService};
@@ -30,6 +31,12 @@ pub enum Command {
     RefreshModels,
     /// アプリ自身が書き込んだテキストを既読にする（自分の出力を再翻訳しないため）
     NoteClipboardWritten(String),
+    /// 履歴に1件記録する。重複は先頭へ移し、上限は設定に従う（Issue #89）
+    RecordHistory(HistoryEntry),
+    /// 履歴から1件削除する（翻訳元・翻訳先・原文が一致するもの）
+    DeleteHistory(HistoryEntry),
+    /// 履歴をすべて削除する
+    ClearHistory,
 }
 
 /// コントローラから、画面や OS 連携の側へ返す通知
@@ -64,6 +71,10 @@ pub enum Event {
     ModelsRefreshed {
         available_pairs: Vec<String>,
     },
+    /// 履歴の操作を処理した。変更の有無にかかわらず、現在の履歴（新しい順）を返す
+    HistoryUpdated {
+        entries: Vec<HistoryEntry>,
+    },
     Error {
         message: String,
     },
@@ -78,6 +89,8 @@ pub struct Controller<T: Translate, C: Clock> {
     clipboard: Box<dyn ClipboardSource>,
     watcher: ClipboardWatcher,
     downloads: DownloadTracker,
+    history: History,
+    history_path: Option<PathBuf>,
 }
 
 impl<T: Translate, C: Clock> Controller<T, C> {
@@ -103,7 +116,24 @@ impl<T: Translate, C: Clock> Controller<T, C> {
             clipboard,
             watcher,
             downloads: DownloadTracker::new(),
+            history: History::new(),
+            history_path: None,
         })
+    }
+
+    /// 履歴の保存先を設定し、保存済みの履歴を読み込む。
+    /// 履歴ファイルが壊れていても起動は妨げず、空の履歴で始める。`None` なら保存しない。
+    pub fn with_history(mut self, path: Option<PathBuf>) -> Self {
+        if let Some(path) = &path {
+            self.history = History::load_or_recover(path);
+        }
+        self.history_path = path;
+        self
+    }
+
+    /// 現在の履歴
+    pub fn history(&self) -> &History {
+        &self.history
     }
 
     pub fn settings(&self) -> &Settings {
@@ -164,7 +194,34 @@ impl<T: Translate, C: Clock> Controller<T, C> {
                 self.note_clipboard_written(&text);
                 Vec::new()
             }
+            Command::RecordHistory(entry) => {
+                let max_entries = self.settings.history_max_entries;
+                self.apply_history_change(|history| history.record(entry, max_entries))
+            }
+            Command::DeleteHistory(entry) => {
+                self.apply_history_change(|history| history.remove(&entry))
+            }
+            Command::ClearHistory => self.apply_history_change(|history| history.clear()),
         }
+    }
+
+    /// 履歴を変更して保存する。履歴の書き込みはここだけで行う（ワーカー1本で直列化される）。
+    ///
+    /// 変更用の関数は、変更があれば true を返す。変更がなければ書き込まない。
+    /// 保存に失敗したときは、メモリ上の履歴も元のままにする。
+    fn apply_history_change(&mut self, change: impl FnOnce(&mut History) -> bool) -> Vec<Event> {
+        let mut updated = self.history.clone();
+        if change(&mut updated) {
+            if let Some(path) = &self.history_path {
+                if let Err(error) = updated.save(path) {
+                    return vec![error_event(error.to_string())];
+                }
+            }
+            self.history = updated;
+        }
+        vec![Event::HistoryUpdated {
+            entries: self.history.entries().to_vec(),
+        }]
     }
 
     fn translate(&mut self, text: &str, report_ignored: bool) -> Vec<Event> {
@@ -727,6 +784,175 @@ mod tests {
             .controller
             .missing_packages(&["en_ja".to_string()])
             .is_empty());
+    }
+
+    fn history_entry(source: &str, output: &str) -> HistoryEntry {
+        HistoryEntry {
+            source_lang: "en".to_string(),
+            target_lang: "ja".to_string(),
+            source: source.to_string(),
+            output: output.to_string(),
+            used_at: 100,
+        }
+    }
+
+    fn history_sources(events: &[Event]) -> Vec<String> {
+        match events {
+            [Event::HistoryUpdated { entries }] => {
+                entries.iter().map(|e| e.source.clone()).collect()
+            }
+            other => panic!("unexpected events: {other:?}"),
+        }
+    }
+
+    fn fixture_with_history_file(path: PathBuf) -> Fixture {
+        let mut f = fixture();
+        f.controller = f.controller.with_history(Some(path));
+        f
+    }
+
+    #[test]
+    fn recorded_history_is_returned_newest_first() {
+        let mut f = fixture();
+        f.controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+        let events = f
+            .controller
+            .handle(Command::RecordHistory(history_entry("two", "2")));
+
+        assert_eq!(history_sources(&events), vec!["two", "one"]);
+        assert_eq!(f.controller.history().len(), 2);
+    }
+
+    #[test]
+    fn duplicate_history_is_not_added_twice() {
+        let mut f = fixture();
+        f.controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+        let events = f
+            .controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+
+        assert_eq!(history_sources(&events), vec!["one"]);
+    }
+
+    #[test]
+    fn history_is_not_recorded_when_the_limit_is_zero() {
+        let settings = Settings {
+            history_max_entries: 0,
+            ..base_settings()
+        };
+        let mut f = fixture_with(settings, None, None);
+
+        let events = f
+            .controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+
+        // 応答は返るが、履歴は空のまま
+        assert!(history_sources(&events).is_empty());
+        assert!(f.controller.history().is_empty());
+    }
+
+    #[test]
+    fn history_respects_the_configured_limit() {
+        let settings = Settings {
+            history_max_entries: 2,
+            ..base_settings()
+        };
+        let mut f = fixture_with(settings, None, None);
+
+        for source in ["one", "two", "three"] {
+            f.controller
+                .handle(Command::RecordHistory(history_entry(source, "x")));
+        }
+
+        assert_eq!(
+            f.controller
+                .history()
+                .entries()
+                .iter()
+                .map(|e| e.source.as_str())
+                .collect::<Vec<_>>(),
+            vec!["three", "two"]
+        );
+    }
+
+    #[test]
+    fn history_delete_and_clear() {
+        let mut f = fixture();
+        f.controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+        f.controller
+            .handle(Command::RecordHistory(history_entry("two", "2")));
+
+        let events = f
+            .controller
+            .handle(Command::DeleteHistory(history_entry("one", "")));
+        assert_eq!(history_sources(&events), vec!["two"]);
+
+        let events = f.controller.handle(Command::ClearHistory);
+        assert!(history_sources(&events).is_empty());
+    }
+
+    #[test]
+    fn history_is_saved_and_restored_across_controllers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+
+        let mut f = fixture_with_history_file(path.clone());
+        f.controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+        assert!(path.exists());
+
+        // 別のコントローラ（再起動に相当）でも同じ履歴が読み込まれる
+        let f2 = fixture_with_history_file(path);
+        assert_eq!(f2.controller.history().len(), 1);
+        assert_eq!(f2.controller.history().entries()[0].source, "one");
+    }
+
+    #[test]
+    fn unchanged_history_is_not_written_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        let mut f = fixture_with_history_file(path.clone());
+
+        f.controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+        // 保存されたファイルを壊しておき、再び書かれたかどうかを調べる
+        std::fs::write(&path, "marker").unwrap();
+
+        f.controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "marker");
+    }
+
+    #[test]
+    fn failed_history_save_keeps_the_previous_history() {
+        let dir = tempfile::tempdir().unwrap();
+        // 親がファイルなので、保存先ディレクトリを作れない
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "file").unwrap();
+        let mut f = fixture_with_history_file(blocker.join("history.json"));
+
+        let events = f
+            .controller
+            .handle(Command::RecordHistory(history_entry("one", "1")));
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Event::Error { .. }));
+        assert!(f.controller.history().is_empty());
+    }
+
+    #[test]
+    fn broken_history_file_does_not_stop_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        std::fs::write(&path, "not json").unwrap();
+
+        let f = fixture_with_history_file(path);
+
+        assert!(f.controller.history().is_empty());
     }
 
     #[test]
