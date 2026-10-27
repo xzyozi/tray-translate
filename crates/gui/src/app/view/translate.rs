@@ -246,6 +246,8 @@ impl GuiApp {
         );
 
         if edit_res.changed() {
+            // 入力が編集されたので、保留中の自動翻訳の結果は途中経過として履歴に残さない（Issue #89）
+            self.history_hold.discard();
             self.request_tracker.invalidate();
             if self.auto_translate && !self.input.trim().is_empty() {
                 self.pending_auto_translate = Some(Instant::now());
@@ -267,6 +269,8 @@ impl GuiApp {
                 })
                 .clicked();
             if clear_clicked {
+                // クリアは翻訳結果を読み終えた操作とみなし、保留中の結果は確定する
+                self.commit_pending_history();
                 self.input.clear();
                 self.request_tracker.invalidate();
                 self.pending_auto_translate = None;
@@ -415,6 +419,10 @@ impl GuiApp {
             ui.add_space(8.0);
             self.render_target_section(ui, 4);
         }
+
+        // 翻訳エリアの下に履歴を置く（Issue #89）
+        ui.add_space(8.0);
+        self.render_history_section(ui);
     }
 }
 

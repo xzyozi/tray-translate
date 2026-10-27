@@ -74,6 +74,22 @@ impl GuiApp {
                 });
                 ui.end_row();
 
+                ui.label("履歴の上限件数:");
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut self.history_max_entries).range(0..=1000));
+                    ui.small("（0 で履歴を記録しない。超えた分は古いものから削除）");
+                });
+                ui.end_row();
+
+                ui.label("履歴の確定待ち時間:");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.history_commit_delay_ms, 500..=30000)
+                            .text("ミリ秒 (既定: 3000ms)"),
+                    );
+                });
+                ui.end_row();
+
                 ui.label("文字数制限:");
                 ui.horizontal(|ui| {
                     ui.label("最小:");

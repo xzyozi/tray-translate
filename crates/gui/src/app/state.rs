@@ -1,4 +1,7 @@
-//! 画面に依存しない状態型（タブ、状態表示、翻訳リクエストの追跡）。
+//! 画面に依存しない状態型（タブ、状態表示、翻訳リクエストの追跡、履歴の確定待ち）。
+
+use std::time::{Duration, Instant};
+use tray_translate_app::HistoryEntry;
 
 /// 画面タブ
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,9 +99,112 @@ impl RequestTracker {
     }
 }
 
+/// 自動翻訳の結果を、履歴に確定するまで1件だけ保留しておく入れ物（Issue #89）。
+///
+/// 入力の途中経過が履歴に残らないようにするためのもの。
+/// 新しい結果で置き換わる前のエントリは、呼び出し側が受け取って確定する。
+#[derive(Debug, Default)]
+pub struct HistoryHold {
+    pending: Option<(HistoryEntry, Instant)>,
+}
+
+impl HistoryHold {
+    /// エントリを保留する。既に保留中のものがあれば、置き換えて、置き換えられた方を返す。
+    pub fn hold(&mut self, entry: HistoryEntry, now: Instant) -> Option<HistoryEntry> {
+        self.pending.replace((entry, now)).map(|(old, _)| old)
+    }
+
+    /// 保留中のエントリを、履歴に残さず捨てる（入力が編集されたとき）。
+    pub fn discard(&mut self) {
+        self.pending = None;
+    }
+
+    /// 保留中のエントリを取り出す（確定するとき）。
+    pub fn take(&mut self) -> Option<HistoryEntry> {
+        self.pending.take().map(|(entry, _)| entry)
+    }
+
+    /// 保留してから `delay` が経っていれば、取り出す。
+    pub fn take_if_due(&mut self, now: Instant, delay: Duration) -> Option<HistoryEntry> {
+        let due = match &self.pending {
+            Some((_, since)) => now.saturating_duration_since(*since) >= delay,
+            None => false,
+        };
+        if due {
+            self.take()
+        } else {
+            None
+        }
+    }
+
+    /// 確定までの残り時間。保留中のものがなければ `None`。
+    pub fn remaining(&self, now: Instant, delay: Duration) -> Option<Duration> {
+        self.pending
+            .as_ref()
+            .map(|(_, since)| delay.saturating_sub(now.saturating_duration_since(*since)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(source: &str) -> HistoryEntry {
+        HistoryEntry {
+            source_lang: "en".to_string(),
+            target_lang: "ja".to_string(),
+            source: source.to_string(),
+            output: "x".to_string(),
+            used_at: 0,
+        }
+    }
+
+    #[test]
+    fn history_hold_is_empty_by_default() {
+        let mut hold = HistoryHold::default();
+        let now = Instant::now();
+        assert!(hold.take().is_none());
+        assert!(hold.take_if_due(now, Duration::ZERO).is_none());
+        assert!(hold.remaining(now, Duration::from_secs(3)).is_none());
+    }
+
+    #[test]
+    fn history_hold_releases_only_after_the_delay() {
+        let mut hold = HistoryHold::default();
+        let start = Instant::now();
+        let delay = Duration::from_secs(3);
+        assert!(hold.hold(entry("one"), start).is_none());
+
+        // 時間が足りないうちは取り出せない
+        let early = start + Duration::from_secs(2);
+        assert!(hold.take_if_due(early, delay).is_none());
+        assert_eq!(hold.remaining(early, delay), Some(Duration::from_secs(1)));
+
+        // 経過後に取り出せる。取り出したら空になる
+        let due = start + Duration::from_secs(3);
+        assert_eq!(hold.take_if_due(due, delay).unwrap().source, "one");
+        assert!(hold.take().is_none());
+    }
+
+    #[test]
+    fn history_hold_returns_the_replaced_entry() {
+        let mut hold = HistoryHold::default();
+        let now = Instant::now();
+        hold.hold(entry("one"), now);
+
+        let replaced = hold.hold(entry("two"), now);
+
+        assert_eq!(replaced.unwrap().source, "one");
+        assert_eq!(hold.take().unwrap().source, "two");
+    }
+
+    #[test]
+    fn history_hold_discard_drops_the_entry() {
+        let mut hold = HistoryHold::default();
+        hold.hold(entry("one"), Instant::now());
+        hold.discard();
+        assert!(hold.take().is_none());
+    }
 
     #[test]
     fn app_status_properties() {

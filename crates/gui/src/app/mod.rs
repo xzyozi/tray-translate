@@ -14,11 +14,12 @@ use crate::models_view::ModelsView;
 use crate::theme;
 use crate::tray::{TrayAction, TrayManager};
 use eframe::egui;
-use state::{ActiveTab, AppStatus, RequestTracker};
+use state::{ActiveTab, AppStatus, HistoryHold, RequestTracker};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 use tray_translate_app::{
-    get_settings_path, models::required_packages, Command, Controller, Event, Settings, SystemClock,
+    get_history_path, get_settings_path, models::required_packages, Command, Controller, Event,
+    HistoryEntry, Settings, SystemClock,
 };
 use tray_translate_core::TranslationRouter;
 use worker::coalesce_ticks;
@@ -72,6 +73,16 @@ pub struct GuiApp {
     last_tick: Instant,
     /// 直近にコピーが成功した時刻（コピーボタンの ✓ 表示用）
     last_copied_at: Option<Instant>,
+    /// 翻訳履歴（新しい順。制御層から通知される内容の写し、Issue #89）
+    history: Vec<HistoryEntry>,
+    /// 履歴の上限件数（設定。0 は記録しない）
+    history_max_entries: usize,
+    /// 自動翻訳の結果を履歴に確定するまでの待機時間（ミリ秒、設定）
+    history_commit_delay_ms: u64,
+    /// 履歴に確定するまで保留している、自動翻訳の結果
+    history_hold: HistoryHold,
+    /// 履歴の全消去の確認中か
+    confirm_clear_history: bool,
 }
 
 impl GuiApp {
@@ -95,14 +106,19 @@ impl GuiApp {
         let auto_translate = settings.auto_translate;
         let auto_translate_delay_ms = settings.auto_translate_delay_ms;
         let use_tray = settings.use_tray;
+        let history_max_entries = settings.history_max_entries;
+        let history_commit_delay_ms = settings.history_commit_delay_ms;
 
+        // 履歴ファイルが壊れていても、空の履歴で起動する（Issue #89）
         let mut controller = Controller::new(
             settings,
             Some(settings_path),
             router,
             SystemClock::new(),
             Box::new(ArboardClipboard::default()),
-        )?;
+        )?
+        .with_history(Some(get_history_path()?));
+        let history = controller.history().entries().to_vec();
 
         let (cmd_tx, cmd_rx) = channel::<Command>();
         let (event_tx, event_rx) = channel::<Event>();
@@ -232,6 +248,11 @@ impl GuiApp {
             to_copy: None,
             last_tick: Instant::now(),
             last_copied_at: None,
+            history,
+            history_max_entries,
+            history_commit_delay_ms,
+            history_hold: HistoryHold::default(),
+            confirm_clear_history: false,
         })
     }
 
@@ -292,6 +313,14 @@ impl GuiApp {
                         continue;
                     }
 
+                    // 採用された結果を履歴に残す（自動翻訳の結果は確定まで保留する、Issue #89）
+                    let history_entry = HistoryEntry::new(
+                        self.source_lang.trim().to_ascii_lowercase(),
+                        self.target_lang.trim().to_ascii_lowercase(),
+                        source.trim().to_string(),
+                        output.clone(),
+                    );
+
                     let mut status = "翻訳しました".to_string();
                     if self.input.trim() != source.trim() {
                         self.input = source;
@@ -304,6 +333,12 @@ impl GuiApp {
                     }
                     self.status = AppStatus::Info(status);
                     self.output = output;
+
+                    if is_auto {
+                        self.hold_history(history_entry);
+                    } else {
+                        self.commit_history(history_entry);
+                    }
                 }
                 Event::TextIgnored => {
                     self.is_translating = false;
@@ -366,6 +401,9 @@ impl GuiApp {
                 Event::ModelsRefreshed { available_pairs } => {
                     self.installed = available_pairs;
                 }
+                Event::HistoryUpdated { entries } => {
+                    self.history = entries;
+                }
                 Event::Error { message } => {
                     self.is_translating = false;
                     // ダウンロード開始の要求が拒否された場合は、待機を取り消す
@@ -390,9 +428,60 @@ impl GuiApp {
             auto_translate: self.auto_translate,
             auto_translate_delay_ms: self.auto_translate_delay_ms,
             use_tray: self.use_tray,
+            history_max_entries: self.history_max_entries,
+            history_commit_delay_ms: self.history_commit_delay_ms,
         };
 
         let _ = self.cmd_tx.send(Command::UpdateSettings(settings));
+    }
+
+    /// 履歴に1件記録するよう、制御層へ依頼する（書き込みは制御層だけが行う）
+    fn commit_history(&mut self, entry: HistoryEntry) {
+        let _ = self.cmd_tx.send(Command::RecordHistory(entry));
+    }
+
+    /// 保留中の自動翻訳の結果があれば、履歴に確定する
+    fn commit_pending_history(&mut self) {
+        if let Some(entry) = self.history_hold.take() {
+            self.commit_history(entry);
+        }
+    }
+
+    /// 自動翻訳の結果を保留する。直前の保留が残っていれば、入力は編集されていないので確定する
+    fn hold_history(&mut self, entry: HistoryEntry) {
+        if let Some(previous) = self.history_hold.hold(entry, Instant::now()) {
+            self.commit_history(previous);
+        }
+    }
+
+    /// 保留中の結果が、待機時間を過ぎていれば履歴に確定する
+    fn check_pending_history(&mut self, ctx: &egui::Context) {
+        let delay = Duration::from_millis(self.history_commit_delay_ms);
+        let now = Instant::now();
+        if let Some(entry) = self.history_hold.take_if_due(now, delay) {
+            self.commit_history(entry);
+        } else if let Some(remaining) = self.history_hold.remaining(now, delay) {
+            ctx.request_repaint_after(remaining);
+        }
+    }
+
+    /// 履歴の1件を画面に戻す。再翻訳はしない
+    fn restore_history(&mut self, entry: &HistoryEntry) {
+        // 別の操作が始まるので、保留中の結果は確定する
+        self.commit_pending_history();
+
+        self.source_lang = entry.source_lang.clone();
+        self.target_lang = entry.target_lang.clone();
+        self.input = entry.source.clone();
+        self.output = entry.output.clone();
+
+        // 古い翻訳結果が復元内容を上書きしないようにし、自動翻訳も起動しない
+        self.request_tracker.invalidate();
+        self.pending_auto_translate = None;
+        self.is_translating = false;
+
+        self.update_settings();
+        self.status = AppStatus::Info("履歴から復元しました".to_string());
     }
 
     /// 翻訳処理を要求する（手動または自動翻訳、ADR-006）
@@ -400,6 +489,11 @@ impl GuiApp {
         let text = self.input.trim().to_string();
         if text.is_empty() {
             return;
+        }
+
+        // 手動の翻訳は別の操作なので、保留中の自動翻訳の結果は確定する
+        if !is_auto {
+            self.commit_pending_history();
         }
 
         self.pending_auto_translate = None;
@@ -462,12 +556,35 @@ impl GuiApp {
     }
 }
 
+/// 終了時に、確定待ちの自動翻訳の結果を履歴へ書き出す（取りこぼし防止、Issue #89）。
+///
+/// 書き込みは制御層（ワーカー）だけが行うため、依頼を送ったあと、その応答を短時間だけ待つ。
+impl Drop for GuiApp {
+    fn drop(&mut self) {
+        let Some(entry) = self.history_hold.take() else {
+            return;
+        };
+        if self.cmd_tx.send(Command::RecordHistory(entry)).is_err() {
+            return;
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match self.event_rx.recv_timeout(remaining) {
+                Ok(Event::HistoryUpdated { .. }) | Ok(Event::Error { .. }) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    }
+}
+
 impl eframe::App for GuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.handle_os_events(ui.ctx());
         self.process_events(ui.ctx());
         self.run_ticks(ui.ctx());
         self.check_auto_translate(ui.ctx());
+        self.check_pending_history(ui.ctx());
         self.copy_pending_result(ui.ctx());
 
         // ウィンドウが非表示（トレイ格納中）なら CentralPanel を描画しない
