@@ -5,6 +5,9 @@ use std::path::PathBuf;
 /// 設定ファイル名
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 
+/// 履歴ファイル名（設定ファイルと同じディレクトリに置く。Issue #89）
+pub const HISTORY_FILE_NAME: &str = "history.json";
+
 /// 設定ディレクトリを決定する（環境変数、OS 標準の順）。
 /// 環境変数 `TT_CONFIG_DIR` が空でなければ最優先とし、
 /// 未設定の場合は OS 標準の設定ディレクトリ配下の `tray-translate` を返す。
@@ -30,6 +33,11 @@ pub fn get_config_dir() -> Result<PathBuf> {
 /// 設定ファイルのパスを取得する
 pub fn get_settings_path() -> Result<PathBuf> {
     Ok(get_config_dir()?.join(SETTINGS_FILE_NAME))
+}
+
+/// 履歴ファイルのパスを取得する
+pub fn get_history_path() -> Result<PathBuf> {
+    Ok(get_config_dir()?.join(HISTORY_FILE_NAME))
 }
 
 #[cfg(test)]
