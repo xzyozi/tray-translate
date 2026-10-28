@@ -4,7 +4,7 @@ document_type: "document_governance"
 document_role: "normative"
 ssot_scope: "document_governance"
 status: "approved"
-version: "1.0"
+version: "1.1"
 created_at: "2026-10-02"
 updated_at: "2026-10-27"
 author: "[作成者 / チーム名]"
@@ -219,6 +219,14 @@ Issue記録では、`source_issue`と`snapshot_at`を設定し、元Issueを追�
 | `docs/adr/`      | アーキテクチャ意思決定記録                 |
 | `docs/logs/`     | 監査・作業・実行ログ。仕様の正本にはしない |
 | `docs/archive/`  | 廃止・保管文書                             |
+
+### テンプレートの置き場所
+
+- テンプレートは、各ディレクトリ直下の `TEMPLATE/` サブフォルダに置く（例: `docs/design/TEMPLATE/`）。対象は `design`、`features`、`how-to`、`setup`、`test`、`adr`。
+- テンプレートのファイル名は `TEMPLATE_<文書名>.md` とする。
+- `TEMPLATE/` には実文書を置かない。実文書は、テンプレートをコピーして `TEMPLATE/` の外（各ディレクトリ直下）に作る。
+- `TEMPLATE/` に、テンプレートの選び方や記入規約を説明する `README.md` を置いてよい（例: `docs/design/TEMPLATE/README.md`）。
+- テンプレート内の相対パスは、`TEMPLATE/` に置いた状態で正しく解決できるように書く。コピー先ではパスの階層が1つ浅くなるため、コピー後に直す。
 
 ## 9. 関連文書
 
