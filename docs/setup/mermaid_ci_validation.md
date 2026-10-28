@@ -1,3 +1,19 @@
+---
+title: "Mermaid CI 検証運用"
+document_type: "operation_procedure"
+document_role: "procedure"
+ssot_scope: "environment"
+status: "review"
+version: "1.1"
+created_at: "2026-10-20"
+updated_at: "2026-10-27"
+author: "xzyozi"
+owner: "xzyozi"
+purpose: "docs/ 配下の Mermaid 図を GitHub Actions で検証する運用を定義するため"
+related_documents:
+  - "ドキュメントガバナンス（相対パス: ../README.md）"
+---
+
 # Mermaid CI 検証運用
 
 ## 目的
@@ -21,8 +37,8 @@
 
 Mermaid検証ワークフローは、次の場合に実行する。
 
-- `main` または `develop` に対するPRで `docs/**/*.md` が変更された場合
-- `main` または `develop` へのpushで `docs/**/*.md` が変更された場合
+- `main` に対するPRで `docs/**/*.md` が変更された場合
+- `main` へのpushで `docs/**/*.md` が変更された場合
 - `workflow_dispatch` による手動実行
 
 通常のPR・pushでは差分ファイルだけを検証する。手動実行では全 `docs/**/*.md` を検証できるようにし、導入時のベースライン確認や定期的な全件確認に使用する。

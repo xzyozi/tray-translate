@@ -1,3 +1,24 @@
+---
+title: "依存関係の管理フロー（Python / pip-tools）"
+document_type: "operation_procedure"
+document_role: "procedure"
+ssot_scope: "environment"
+status: "deprecated"
+version: "1.0"
+created_at: "2026-10-20"
+updated_at: "2026-10-27"
+author: "xzyozi"
+owner: "xzyozi"
+purpose: "Python の依存関係を pip-tools で管理する手順を保管する。このリポジトリには適用されないため廃止した"
+related_documents:
+  - "ドキュメントガバナンス（相対パス: ../README.md）"
+---
+
+> **廃止（deprecated）**: この文書は、別のプロジェクトのテンプレートから持ち込まれた記述で、このリポジトリには適用されない。
+>
+> - **理由**: `requirements.in`、Flask、`python setup.py`（データベースのマイグレーション、`esbuild`）を前提としているが、これらはこのリポジトリに存在しない。このリポジトリは Rust（Cargo）で、Python は `bench/` の検証だけに使う。
+> - **代替**: Rust の依存管理（`Cargo.lock`、`--locked`、`ct2rs` の固定）は、環境・開発基盤仕様書（#102）で定義する。
+
 # 依存関係の管理フロー
 
 このプロジェクトでは、Pythonの依存関係を管理するために `pip-tools` を使用します。

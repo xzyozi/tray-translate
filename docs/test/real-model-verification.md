@@ -1,3 +1,21 @@
+---
+title: "実モデルを使った確認手順（CLI・画面なし）"
+document_type: "operation_procedure"
+document_role: "procedure"
+ssot_scope: "test_evidence"
+status: "review"
+version: "1.0"
+created_at: "2026-10-23"
+updated_at: "2026-10-27"
+author: "xzyozi"
+owner: "xzyozi"
+purpose: "画面のない Linux 検証機で、実モデルによる翻訳と Argos との出力比較を確認する手順を定義するため"
+related_documents:
+  - "ドキュメントガバナンス（相対パス: ../README.md）"
+  - "ADR-003 G3 の合格基準（相対パス: ../adr/003-g3-acceptance-criteria.md）"
+  - "テスト文セット（相対パス: ../testdata/sentences.json）"
+---
+
 # 実モデルを使った確認手順（CLI・画面なし）
 
 画面のない Linux 検証機でも実行できる確認手順。コードの変更後、`cargo test` では確認できない「実モデルでの翻訳」を確かめる。

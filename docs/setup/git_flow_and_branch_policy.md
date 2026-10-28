@@ -1,3 +1,19 @@
+---
+title: "開発ワークフロー ＆ ブランチ運用規約"
+document_type: "operation_procedure"
+document_role: "procedure"
+ssot_scope: "environment"
+status: "review"
+version: "1.0"
+created_at: "2026-10-20"
+updated_at: "2026-10-27"
+author: "xzyozi"
+owner: "xzyozi"
+purpose: "GitHub Flow の開発サイクル、ブランチ命名、コミットメッセージ、ブランチの自動整理の規約を定義するため"
+related_documents:
+  - "ドキュメントガバナンス（相対パス: ../README.md）"
+---
+
 # 開発ワークフロー ＆ ブランチ運用規約
 
 本ドキュメントは、プロジェクトにおける **GitHub Flow 開発サイクル**、**ブランチ命名規則**、および **GitHub / CI/CD / ローカル Git** を活用したブランチの自動クリーンアップ・管理仕様を定義します。
