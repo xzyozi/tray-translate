@@ -4,7 +4,7 @@ document_type: "document_governance"
 document_role: "normative"
 ssot_scope: "document_governance"
 status: "approved"
-version: "1.1"
+version: "1.2"
 created_at: "2026-10-02"
 updated_at: "2026-10-27"
 author: "[作成者 / チーム名]"
@@ -44,16 +44,18 @@ related_documents:
 
 `document_type` は文書の種類、`document_role` はその文書が情報に対して担う役割を表す。
 
-| 文書役割      | 意味                                   | 代表的な配置                               |
-| :------------ | :------------------------------------- | :----------------------------------------- |
-| `requirement` | 実現すべき目的、要求、受け入れ条件     | `docs/features/`                           |
-| `normative`   | 現在の仕様・設計・契約の正本           | `docs/design/`、`docs/setup/`              |
-| `rationale`   | 判断の背景、選択肢、理由、トレードオフ | `docs/adr/`、`docs/analysis/`              |
-| `procedure`   | 開発、運用、復旧などの実行手順         | `docs/how-to/`、`docs/setup/`              |
-| `evidence`    | テスト、レビュー、監査などの証跡       | `docs/test/`、`docs/review/`、`docs/logs/` |
-| `reference`   | 正本を補足する参考情報                 | 各領域の適切なディレクトリ                 |
+| 文書役割      | 意味                                   | 代表的な配置                                |
+| :------------ | :------------------------------------- | :------------------------------------------ |
+| `requirement` | 実現すべき目的、要求、受け入れ条件     | `docs/features/`                            |
+| `normative`   | 現在の仕様・設計・契約の正本           | `docs/design/`、`docs/setup/`               |
+| `rationale`   | 判断の背景、選択肢、理由、トレードオフ | `docs/adr/`、`docs/analysis/`               |
+| `procedure`   | 開発、運用、復旧などの実行手順         | `docs/how-to/`、`docs/setup/`、`docs/test/` |
+| `evidence`    | テスト、レビュー、監査などの証跡       | `docs/test/`、`docs/review/`、`docs/logs/`  |
+| `reference`   | 正本を補足する参考情報                 | 各領域の適切なディレクトリ                  |
 
 `document_role` は文書種別とは独立して指定する。例えば、環境仕様は正規仕様（`normative`）になり、環境構築手順は手順書（`procedure`）になる。
+
+`docs/test/` には、テスト計画、テストの手順書、実行結果を置く。テストの手順書は `document_role: procedure`、`ssot_scope: test_evidence` とし、実行結果は `document_role: evidence` とする。
 
 ## 3. SSOTマップ
 
@@ -119,6 +121,8 @@ ADRを作成するか迷う場合は、将来の担当者が「なぜこの方�
 ## 6. Frontmatter規約
 
 新規に作成する文書は、先頭に次のFrontmatterを置く。既存文書は更新時に適用する。
+
+各 `TEMPLATE/` 配下の `README.md`（テンプレートの選び方や記入規約を説明する運用ガイド）は、正本を定義しない説明文書のため、Frontmatterの対象外とする（[ADR-001](adr/001-document-governance-and-ssot.md)）。
 
 ```yaml
 ---
@@ -215,10 +219,18 @@ Issue記録では、`source_issue`と`snapshot_at`を設定し、元Issueを追�
 | `docs/review/`   | レビュー記録・承認結果                     |
 | `docs/how-to/`   | 操作・運用・復旧手順                       |
 | `docs/setup/`    | 環境・開発基盤の仕様と手順                 |
-| `docs/test/`     | テスト計画・結果・証跡                     |
+| `docs/test/`     | テスト計画・手順・結果・証跡               |
+| `docs/testdata/` | テスト用データ（下記）                     |
 | `docs/adr/`      | アーキテクチャ意思決定記録                 |
 | `docs/logs/`     | 監査・作業・実行ログ。仕様の正本にはしない |
 | `docs/archive/`  | 廃止・保管文書                             |
+
+### テスト用データ（`docs/testdata/`）
+
+`docs/testdata/` には、文書として読むものではなく、検証の入力として使うデータ（例: Argos との出力比較に使うテスト文のセット `sentences.json`）を置く。実行時にも参照される。
+
+- 参照元: `bench/argos_baseline.py`（既定の入力）、CLI の `bench` コマンドの実行例、ADR-003、`docs/test/` 配下の文書。
+- パスを変更すると、これらの参照元がすべて影響を受ける。移動するときは、参照元を同じ変更で更新する。
 
 ### テンプレートの置き場所
 
