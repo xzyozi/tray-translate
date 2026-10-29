@@ -4,7 +4,7 @@ document_type: "document_governance"
 document_role: "normative"
 ssot_scope: "document_governance"
 status: "approved"
-version: "1.2"
+version: "1.3"
 created_at: "2026-10-02"
 updated_at: "2026-10-27"
 author: "[作成者 / チーム名]"
@@ -23,6 +23,7 @@ related_documents:
   - "ADR-007 GUI のプラットフォーム依存処理の境界とウィンドウのライフサイクル（相対パス: ./adr/007-gui-platform-boundary-and-window-lifecycle.md）"
   - "GUI 手動テスト・動作確認手順書（相対パス: ./test/gui-manual-test-guide.md）"
   - "実モデルを使った確認手順（CLI）（相対パス: ./test/real-model-verification.md）"
+  - "TT-ENV-001 環境・開発基盤仕様書（相対パス: ./setup/TT-ENV-001_環境・開発基盤仕様書.md）"
 ---
 
 # ドキュメントガバナンス
@@ -254,3 +255,4 @@ Issue記録では、`source_issue`と`snapshot_at`を設定し、元Issueを追�
 - [ADR-007 GUI のプラットフォーム依存処理の境界とウィンドウのライフサイクル](adr/007-gui-platform-boundary-and-window-lifecycle.md)
 - [GUI 手動テスト・動作確認手順書](test/gui-manual-test-guide.md)
 - [実モデルを使った確認手順（CLI）](test/real-model-verification.md)
+- [TT-ENV-001 環境・開発基盤仕様書](setup/TT-ENV-001_環境・開発基盤仕様書.md)
