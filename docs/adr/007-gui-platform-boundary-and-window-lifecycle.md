@@ -5,9 +5,9 @@ document_number: "ADR-007"
 document_role: "rationale"
 ssot_scope: "decision_rationale"
 status: "accepted"
-version: "1.0"
+version: "1.1"
 created_at: "2026-10-26"
-updated_at: "2026-10-26"
+updated_at: "2026-10-27"
 author: "tray-translate team"
 owner: "tray-translate team"
 purpose: "タスクトレイやグローバルホットキーなどの OS 依存処理を境界に閉じ込める方式と、トレイが使えない環境でも安全に終了できるウィンドウの扱いを記録するため"
@@ -166,8 +166,17 @@ pub fn can_hide_to_tray(use_tray: bool, tray_active: bool) -> bool;
 - [x] 判断変更時は本書を削除せず、後継ADRを作成する方針を確認した。
 - [x] 機密情報や認証情報を記載していない。
 
-## 8. 改訂履歴 (Change Log)
+## 8. 実装状況の注記
+
+- `use_tray` は仮称ではなく、実装で確定した設定名である。
+- Ubuntu CI の GUI clippy/test および `--no-default-features` 検査は、PR #88 で実装済みである。
+- `default-members` への復帰は未実施であり、引き続き検討事項とする。
+- `app.rs` は PR #91 で `crates/gui/src/app/` に分割された。本文中の `app.rs` への言及は、その分割前の当時の状態を記録したものである。
+- 本注記は判断理由を変えない。現在の仕様は BD/DD/DS/ENV（基本設計書、詳細設計書、データ構造仕様書、環境・開発基盤仕様書）を参照する。
+
+## 9. 改訂履歴 (Change Log)
 
 | 版数    | 改訂日     | 変更者              | 変更内容・変更理由 (Why)                                      |
 | :------ | :--------- | :------------------ | :------------------------------------------------------------ |
 | Rev.1.0 | 2026-10-26 | tray-translate team | 新規作成（#85 の壁打ち結果。Linux での GUI 検査の成功を反映） |
+| Rev.1.1 | 2026-10-27 | tray-translate team | 実装状況の注記を追加し、現在の仕様の参照先を明記              |
