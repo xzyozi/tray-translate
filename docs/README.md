@@ -4,7 +4,7 @@ document_type: "document_governance"
 document_role: "normative"
 ssot_scope: "document_governance"
 status: "approved"
-version: "1.3"
+version: "1.5"
 created_at: "2026-10-02"
 updated_at: "2026-10-27"
 author: "[作成者 / チーム名]"
@@ -21,6 +21,11 @@ related_documents:
   - "ADR-005 panic 方針と言語コードの前提（相対パス: ./adr/005-panic-policy.md）"
   - "ADR-006 GUI のマルチプラットフォーム方針と日本語フォントの扱い（相対パス: ./adr/006-gui-portability-and-font-policy.md）"
   - "ADR-007 GUI のプラットフォーム依存処理の境界とウィンドウのライフサイクル（相対パス: ./adr/007-gui-platform-boundary-and-window-lifecycle.md）"
+  - "ADR-008 環境パスと設定上書きの実装整合性（相対パス: ./adr/008-environment-path-and-overrides.md）"
+  - "TT-DS-001 データ構造仕様書（相対パス: ./design/TT-DS-001_データ構造仕様書.md）"
+  - "TT-DD-001 翻訳基盤詳細設計書（相対パス: ./design/TT-DD-001_翻訳基盤詳細設計書.md）"
+  - "TT-DD-002 常駐アプリ制御詳細設計書（相対パス: ./design/TT-DD-002_常駐アプリ制御詳細設計書.md）"
+  - "TT-DD-003 GUI詳細設計書（相対パス: ./design/TT-DD-003_GUI詳細設計書.md）"
   - "GUI 手動テスト・動作確認手順書（相対パス: ./test/gui-manual-test-guide.md）"
   - "実モデルを使った確認手順（CLI）（相対パス: ./test/real-model-verification.md）"
   - "TT-ENV-001 環境・開発基盤仕様書（相対パス: ./setup/TT-ENV-001_環境・開発基盤仕様書.md）"
@@ -253,6 +258,18 @@ Issue記録では、`source_issue`と`snapshot_at`を設定し、元Issueを追�
 - [ADR-005 panic 方針と言語コードの前提](adr/005-panic-policy.md)
 - [ADR-006 GUI のマルチプラットフォーム方針と日本語フォントの扱い](adr/006-gui-portability-and-font-policy.md)
 - [ADR-007 GUI のプラットフォーム依存処理の境界とウィンドウのライフサイクル](adr/007-gui-platform-boundary-and-window-lifecycle.md)
+- [ADR-008 環境パスと設定上書きの実装整合性](adr/008-environment-path-and-overrides.md)
+- [TT-DS-001 データ構造仕様書](design/TT-DS-001_データ構造仕様書.md)
+- [TT-DD-001 翻訳基盤詳細設計書](design/TT-DD-001_翻訳基盤詳細設計書.md)
+- [TT-DD-002 常駐アプリ制御詳細設計書](design/TT-DD-002_常駐アプリ制御詳細設計書.md)
+- [TT-DD-003 GUI詳細設計書](design/TT-DD-003_GUI詳細設計書.md)
+- [TT-ENV-001 環境・開発基盤仕様書](setup/TT-ENV-001_環境・開発基盤仕様書.md)
+- [ADR-008 環境パスと設定上書きの実装整合性](adr/008-environment-path-and-overrides.md)
+- [TT-DS-001 データ構造仕様書](design/TT-DS-001_データ構造仕様書.md)
+- [TT-DD-001 翻訳基盤詳細設計書](design/TT-DD-001_翻訳基盤詳細設計書.md)
+- [TT-DD-002 常駐アプリ制御詳細設計書](design/TT-DD-002_常駐アプリ制御詳細設計書.md)
+- [TT-DD-003 GUI詳細設計書](design/TT-DD-003_GUI詳細設計書.md)
+- [TT-ENV-001 環境・開発基盤仕様書](setup/TT-ENV-001_環境・開発基盤仕様書.md)
 - [GUI 手動テスト・動作確認手順書](test/gui-manual-test-guide.md)
 - [実モデルを使った確認手順（CLI）](test/real-model-verification.md)
 - [TT-ENV-001 環境・開発基盤仕様書](setup/TT-ENV-001_環境・開発基盤仕様書.md)
