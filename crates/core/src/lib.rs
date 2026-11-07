@@ -13,5 +13,5 @@ pub use hub::{ModelHub, PackageIndexEntry};
 pub use package::{install_from_archive, ModelPackage, PackageMetadata};
 pub use paths::get_model_dir;
 pub use pipeline::TranslatorPipeline;
-pub use router::{TranslationRoute, TranslationRouter};
+pub use router::{TranslationProgress, TranslationRoute, TranslationRouter};
 pub use sbd::RuleBasedSentenceSplitter;

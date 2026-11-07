@@ -20,6 +20,15 @@ pub enum TranslationRoute {
     },
 }
 
+/// 翻訳処理の進捗イベント
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranslationProgress {
+    /// モデルを読み込み中（pair: 言語ペアキー、例: "en_ja"）
+    LoadingModel { pair: String },
+    /// 翻訳処理（推論）中
+    Translating,
+}
+
 /// 複数言語モデルの管理およびピボット（英語中継）ルーティングを担うルーター
 pub struct TranslationRouter {
     packages_dir: PathBuf,
@@ -147,8 +156,15 @@ impl TranslationRouter {
     }
 
     /// 指定した言語ペアキーのパイプラインを取得（キャッシュになければロード）
-    fn get_or_load_pipeline(&mut self, pair_key: &str) -> Result<&TranslatorPipeline> {
+    fn get_or_load_pipeline(
+        &mut self,
+        pair_key: &str,
+        mut on_progress: impl FnMut(TranslationProgress),
+    ) -> Result<&TranslatorPipeline> {
         if !self.pipeline_cache.contains_key(pair_key) {
+            on_progress(TranslationProgress::LoadingModel {
+                pair: pair_key.to_string(),
+            });
             let path = self
                 .available_pairs
                 .get(pair_key)
@@ -163,13 +179,20 @@ impl TranslationRouter {
         Ok(self.pipeline_cache.get(pair_key).unwrap())
     }
 
-    /// ルーティングに従ってテキストを翻訳する
-    pub fn translate(&mut self, from: &str, to: &str, text: &str) -> Result<String> {
+    /// ルーティングに従ってテキストを翻訳する（進捗通知コールバック付き）
+    pub fn translate_with_progress(
+        &mut self,
+        from: &str,
+        to: &str,
+        text: &str,
+        mut on_progress: impl FnMut(TranslationProgress),
+    ) -> Result<String> {
         let route = self.plan_route(from, to)?;
         match route {
             TranslationRoute::Identity => Ok(text.to_string()),
             TranslationRoute::Direct { pair_key } => {
-                let pipeline = self.get_or_load_pipeline(&pair_key)?;
+                let pipeline = self.get_or_load_pipeline(&pair_key, &mut on_progress)?;
+                on_progress(TranslationProgress::Translating);
                 pipeline.translate(text)
             }
             TranslationRoute::Pivot {
@@ -182,14 +205,26 @@ impl TranslationRouter {
                     "Executing 2-step pivot translation via 'en'"
                 );
                 let intermediate = {
-                    let pipeline1 = self.get_or_load_pipeline(&step1_key)?;
+                    let pipeline1 = self.get_or_load_pipeline(&step1_key, &mut on_progress)?;
+                    on_progress(TranslationProgress::Translating);
                     pipeline1.translate(text)?
                 };
 
-                let pipeline2 = self.get_or_load_pipeline(&step2_key)?;
+                let pipeline2 = self.get_or_load_pipeline(&step2_key, &mut on_progress)?;
+                on_progress(TranslationProgress::Translating);
                 pipeline2.translate(&intermediate)
             }
         }
+    }
+
+    /// ルーティングに従ってテキストを翻訳する
+    pub fn translate(&mut self, from: &str, to: &str, text: &str) -> Result<String> {
+        self.translate_with_progress(from, to, text, |_| {})
+    }
+
+    /// 指定された言語ペアのパイプラインが既にロード（キャッシュ）されているか
+    pub fn is_loaded(&self, pair_key: &str) -> bool {
+        self.pipeline_cache.contains_key(pair_key)
     }
 
     /// 現在ロードされているパイプライン数（メモリ消費の目安）
@@ -273,11 +308,18 @@ mod tests {
             pipeline_cache: HashMap::new(),
         };
 
-        let result = router.get_or_load_pipeline("not_a_known_pair");
+        let mut progress = Vec::new();
+        let result = router.get_or_load_pipeline("not_a_known_pair", |p| progress.push(p));
         assert!(matches!(
             result,
             Err(CoreError::UnknownPairKey(key)) if key == "not_a_known_pair"
         ));
+        assert_eq!(
+            progress,
+            vec![TranslationProgress::LoadingModel {
+                pair: "not_a_known_pair".to_string()
+            }]
+        );
     }
 
     #[test]
@@ -295,5 +337,23 @@ mod tests {
         // エラーでパニックや中断せず、警告ログを出して空のリストで完了すること
         assert!(router.refresh_available_packages().is_ok());
         assert!(router.available_pairs().is_empty());
+    }
+
+    #[test]
+    fn test_translate_with_progress_identity() {
+        let mut router = TranslationRouter {
+            packages_dir: PathBuf::from("dummy"),
+            available_pairs: HashMap::new(),
+            pipeline_cache: HashMap::new(),
+        };
+
+        let mut progress = Vec::new();
+        let result = router
+            .translate_with_progress("ja", "ja", "こんにちは", |p| progress.push(p))
+            .unwrap();
+        assert_eq!(result, "こんにちは");
+        // 同一言語の場合はパイプラインのロードも推論も不要なため進捗は空
+        assert!(progress.is_empty());
+        assert!(!router.is_loaded("ja_ja"));
     }
 }

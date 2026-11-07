@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::history::{History, HistoryEntry};
 use crate::hotkey::Hotkey;
 use crate::models::{parse_pair_key, required_packages, DownloadState, DownloadTracker};
-use crate::service::{Clock, ServiceConfig, Translate, TranslationService};
+use crate::service::{Clock, ServiceConfig, Translate, TranslationProgress, TranslationService};
 use std::path::PathBuf;
 
 /// 画面や OS 連携の側から、コントローラへ渡す操作
@@ -42,6 +42,12 @@ pub enum Command {
 /// コントローラから、画面や OS 連携の側へ返す通知
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    /// モデルの読み込みを開始した（未ロードのモデルの場合のみ通知される）
+    ModelLoading {
+        pair: String,
+    },
+    /// 翻訳処理（推論）を実行中
+    Translating,
     Translated {
         source: String,
         output: String,
@@ -158,14 +164,26 @@ impl<T: Translate, C: Clock> Controller<T, C> {
         self.watcher.mark_written(text);
     }
 
-    /// 操作を処理し、結果の通知を返す
-    pub fn handle(&mut self, command: Command) -> Vec<Event> {
+    /// 操作を処理し、発生した通知を順次 `notify` に渡す
+    pub fn handle_with_notify(&mut self, command: Command, mut notify: impl FnMut(Event)) {
         match command {
-            Command::TranslateText(text) => self.translate(&text, true),
-            Command::ClipboardTick => self.clipboard_tick(),
-            Command::IdleTick => self.idle_tick(),
-            Command::UpdateSettings(settings) => self.update_settings(settings),
-            Command::StartDownload(pair) => self.start_download(&pair),
+            Command::TranslateText(text) => self.translate(&text, true, notify),
+            Command::ClipboardTick => self.clipboard_tick(notify),
+            Command::IdleTick => {
+                for event in self.idle_tick() {
+                    notify(event);
+                }
+            }
+            Command::UpdateSettings(settings) => {
+                for event in self.update_settings(settings) {
+                    notify(event);
+                }
+            }
+            Command::StartDownload(pair) => {
+                for event in self.start_download(&pair) {
+                    notify(event);
+                }
+            }
             Command::DownloadProgress {
                 downloaded_bytes,
                 total_bytes,
@@ -173,36 +191,52 @@ impl<T: Translate, C: Clock> Controller<T, C> {
                 self.downloads
                     .update_progress(downloaded_bytes, total_bytes);
                 if let DownloadState::Running { pair, .. } = self.downloads.state() {
-                    vec![Event::DownloadProgress {
+                    notify(Event::DownloadProgress {
                         pair: pair.clone(),
                         downloaded_bytes,
                         total_bytes,
-                    }]
-                } else {
-                    Vec::new()
+                    });
                 }
             }
-            Command::DownloadFinished(result) => self.finish_download(result),
+            Command::DownloadFinished(result) => {
+                for event in self.finish_download(result) {
+                    notify(event);
+                }
+            }
             Command::RefreshModels => {
                 let _ = self.service.backend_mut().refresh();
                 let pairs = self.service.backend().available_pairs();
-                vec![Event::ModelsRefreshed {
+                notify(Event::ModelsRefreshed {
                     available_pairs: pairs,
-                }]
+                });
             }
             Command::NoteClipboardWritten(text) => {
                 self.note_clipboard_written(&text);
-                Vec::new()
             }
             Command::RecordHistory(entry) => {
                 let max_entries = self.settings.history_max_entries;
-                self.apply_history_change(|history| history.record(entry, max_entries))
+                for event in self.apply_history_change(|history| history.record(entry, max_entries)) {
+                    notify(event);
+                }
             }
             Command::DeleteHistory(entry) => {
-                self.apply_history_change(|history| history.remove(&entry))
+                for event in self.apply_history_change(|history| history.remove(&entry)) {
+                    notify(event);
+                }
             }
-            Command::ClearHistory => self.apply_history_change(|history| history.clear()),
+            Command::ClearHistory => {
+                for event in self.apply_history_change(|history| history.clear()) {
+                    notify(event);
+                }
+            }
         }
+    }
+
+    /// 操作を処理し、結果の通知を返す
+    pub fn handle(&mut self, command: Command) -> Vec<Event> {
+        let mut events = Vec::new();
+        self.handle_with_notify(command, |event| events.push(event));
+        events
     }
 
     /// 履歴を変更して保存する。履歴の書き込みはここだけで行う（ワーカー1本で直列化される）。
@@ -224,25 +258,34 @@ impl<T: Translate, C: Clock> Controller<T, C> {
         }]
     }
 
-    fn translate(&mut self, text: &str, report_ignored: bool) -> Vec<Event> {
-        match self.service.translate(text) {
-            Ok(Some(output)) => vec![Event::Translated {
+    fn translate(&mut self, text: &str, report_ignored: bool, mut notify: impl FnMut(Event)) {
+        let result = self.service.translate_with_progress(text, |progress| {
+            match progress {
+                TranslationProgress::LoadingModel { pair } => {
+                    notify(Event::ModelLoading { pair });
+                }
+                TranslationProgress::Translating => {
+                    notify(Event::Translating);
+                }
+            }
+        });
+        match result {
+            Ok(Some(output)) => notify(Event::Translated {
                 source: text.trim().to_string(),
                 output,
-            }],
-            Ok(None) if report_ignored => vec![Event::TextIgnored],
-            Ok(None) => Vec::new(),
-            Err(error) => vec![error_event(error.to_string())],
+            }),
+            Ok(None) if report_ignored => notify(Event::TextIgnored),
+            Ok(None) => {}
+            Err(error) => notify(error_event(error.to_string())),
         }
     }
 
-    fn clipboard_tick(&mut self) -> Vec<Event> {
+    fn clipboard_tick(&mut self, notify: impl FnMut(Event)) {
         if !self.settings.watch_clipboard {
-            return Vec::new();
+            return;
         }
-        match self.watcher.poll(self.clipboard.as_mut()) {
-            Some(text) => self.translate(&text, false),
-            None => Vec::new(),
+        if let Some(text) = self.watcher.poll(self.clipboard.as_mut()) {
+            self.translate(&text, false, notify);
         }
     }
 
@@ -963,5 +1006,88 @@ mod tests {
         f.set_clipboard("written text");
         let events = f.controller.handle(Command::ClipboardTick);
         assert!(events.is_empty());
+    }
+
+    struct ProgressFakeBackend {
+        loaded: bool,
+    }
+
+    impl Translate for ProgressFakeBackend {
+        fn translate(&mut self, _from: &str, _to: &str, _text: &str) -> Result<String> {
+            Ok("translated".to_string())
+        }
+
+        fn translate_with_progress(
+            &mut self,
+            from: &str,
+            to: &str,
+            text: &str,
+            on_progress: &mut dyn FnMut(TranslationProgress),
+        ) -> Result<String> {
+            let pair = format!("{from}_{to}");
+            if !self.loaded {
+                on_progress(TranslationProgress::LoadingModel { pair });
+                self.loaded = true;
+            }
+            on_progress(TranslationProgress::Translating);
+            self.translate(from, to, text)
+        }
+
+        fn unload_all(&mut self) {
+            self.loaded = false;
+        }
+
+        fn loaded_count(&self) -> usize {
+            if self.loaded {
+                1
+            } else {
+                0
+            }
+        }
+    }
+
+    #[test]
+    fn translation_progress_events_emitted_in_order() {
+        let backend = ProgressFakeBackend { loaded: false };
+        let clock = FakeClock(Rc::new(Cell::new(Duration::ZERO)));
+        let settings = Settings::default();
+        let clipboard = Box::new(SharedClipboard(Arc::new(Mutex::new(None))));
+        let mut controller =
+            Controller::new(settings, None, backend, clock, clipboard).unwrap();
+
+        // 1回目（未ロード）：ModelLoading -> Translating -> Translated
+        let mut events1 = Vec::new();
+        controller.handle_with_notify(Command::TranslateText("hello".to_string()), |ev| {
+            events1.push(ev);
+        });
+        assert_eq!(
+            events1,
+            vec![
+                Event::ModelLoading {
+                    pair: "en_ja".to_string()
+                },
+                Event::Translating,
+                Event::Translated {
+                    source: "hello".to_string(),
+                    output: "translated".to_string(),
+                }
+            ]
+        );
+
+        // 2回目（ロード済み）：Translating -> Translated のみ
+        let mut events2 = Vec::new();
+        controller.handle_with_notify(Command::TranslateText("world".to_string()), |ev| {
+            events2.push(ev);
+        });
+        assert_eq!(
+            events2,
+            vec![
+                Event::Translating,
+                Event::Translated {
+                    source: "world".to_string(),
+                    output: "translated".to_string(),
+                }
+            ]
+        );
     }
 }
