@@ -215,7 +215,8 @@ impl<T: Translate, C: Clock> Controller<T, C> {
             }
             Command::RecordHistory(entry) => {
                 let max_entries = self.settings.history_max_entries;
-                for event in self.apply_history_change(|history| history.record(entry, max_entries)) {
+                for event in self.apply_history_change(|history| history.record(entry, max_entries))
+                {
                     notify(event);
                 }
             }
@@ -259,16 +260,16 @@ impl<T: Translate, C: Clock> Controller<T, C> {
     }
 
     fn translate(&mut self, text: &str, report_ignored: bool, mut notify: impl FnMut(Event)) {
-        let result = self.service.translate_with_progress(text, |progress| {
-            match progress {
+        let result = self
+            .service
+            .translate_with_progress(text, |progress| match progress {
                 TranslationProgress::LoadingModel { pair } => {
                     notify(Event::ModelLoading { pair });
                 }
                 TranslationProgress::Translating => {
                     notify(Event::Translating);
                 }
-            }
-        });
+            });
         match result {
             Ok(Some(output)) => notify(Event::Translated {
                 source: text.trim().to_string(),
@@ -1052,8 +1053,7 @@ mod tests {
         let clock = FakeClock(Rc::new(Cell::new(Duration::ZERO)));
         let settings = Settings::default();
         let clipboard = Box::new(SharedClipboard(Arc::new(Mutex::new(None))));
-        let mut controller =
-            Controller::new(settings, None, backend, clock, clipboard).unwrap();
+        let mut controller = Controller::new(settings, None, backend, clock, clipboard).unwrap();
 
         // 1回目（未ロード）：ModelLoading -> Translating -> Translated
         let mut events1 = Vec::new();
