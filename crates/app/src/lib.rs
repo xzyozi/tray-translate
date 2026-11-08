@@ -24,4 +24,6 @@ pub use models::{
     InstalledModel,
 };
 pub use paths::{get_config_dir, get_history_path, get_settings_path, resolve_config_dir};
-pub use service::{Clock, ServiceConfig, SystemClock, Translate, TranslationService};
+pub use service::{
+    Clock, ServiceConfig, SystemClock, Translate, TranslationProgress, TranslationService,
+};

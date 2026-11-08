@@ -141,9 +141,10 @@ impl GuiApp {
                             ticks.push(Command::IdleTick);
                         }
                         for tick in ticks {
-                            for ev in controller.handle(tick) {
+                            controller.handle_with_notify(tick, |ev| {
                                 let _ = event_tx.send(ev);
-                            }
+                                egui_ctx.request_repaint();
+                            });
                         }
                         egui_ctx.request_repaint();
 
@@ -154,17 +155,12 @@ impl GuiApp {
                         }
                     }
 
-                    let events = controller.handle(cmd);
-                    let mut has_events = false;
-                    for event in events {
-                        has_events = true;
+                    controller.handle_with_notify(cmd, |event| {
                         if event_tx.send(event).is_err() {
                             return;
                         }
-                    }
-                    if has_events {
                         egui_ctx.request_repaint();
-                    }
+                    });
                 }
             })?;
 
@@ -305,6 +301,12 @@ impl GuiApp {
     fn process_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
+                Event::ModelLoading { pair } => {
+                    self.status = AppStatus::Busy(format!("モデルを読み込み中…: {pair}"));
+                }
+                Event::Translating => {
+                    self.status = AppStatus::Busy("翻訳中…".to_string());
+                }
                 Event::Translated { source, output } => {
                     self.is_translating = false;
                     let (accept, is_auto) = self.request_tracker.on_translated(&source);
@@ -502,8 +504,7 @@ impl GuiApp {
             .issue_request(self.input.clone(), is_auto);
 
         self.update_settings();
-        self.status =
-            AppStatus::Busy("翻訳中…（初回はモデルの読み込みに時間がかかります）".to_string());
+        self.status = AppStatus::Busy("翻訳中…".to_string());
         self.is_translating = true;
         let _ = self.cmd_tx.send(Command::TranslateText(self.input.clone()));
     }

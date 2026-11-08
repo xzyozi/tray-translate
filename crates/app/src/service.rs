@@ -1,11 +1,23 @@
 use crate::config::Settings;
 use crate::error::{AppError, Result};
 use std::time::{Duration, Instant};
+pub use tray_translate_core::TranslationProgress;
 use tray_translate_core::TranslationRouter;
 
 /// 翻訳バックエンド。実体は `TranslationRouter` で、テストでは偽物に差し替える。
 pub trait Translate {
     fn translate(&mut self, from: &str, to: &str, text: &str) -> Result<String>;
+    /// 進捗通知を受け取りながら翻訳する（デフォルト実装は `translate` を呼び出す）
+    fn translate_with_progress(
+        &mut self,
+        from: &str,
+        to: &str,
+        text: &str,
+        on_progress: &mut dyn FnMut(TranslationProgress),
+    ) -> Result<String> {
+        let _ = on_progress;
+        self.translate(from, to, text)
+    }
     /// ロード済みのモデルをすべて解放する
     fn unload_all(&mut self);
     /// 現在ロードされているモデル数
@@ -23,6 +35,22 @@ pub trait Translate {
 impl Translate for TranslationRouter {
     fn translate(&mut self, from: &str, to: &str, text: &str) -> Result<String> {
         Ok(TranslationRouter::translate(self, from, to, text)?)
+    }
+
+    fn translate_with_progress(
+        &mut self,
+        from: &str,
+        to: &str,
+        text: &str,
+        on_progress: &mut dyn FnMut(TranslationProgress),
+    ) -> Result<String> {
+        Ok(TranslationRouter::translate_with_progress(
+            self,
+            from,
+            to,
+            text,
+            on_progress,
+        )?)
     }
 
     fn unload_all(&mut self) {
@@ -142,6 +170,15 @@ impl<T: Translate, C: Clock> TranslationService<T, C> {
     /// - `max_chars` を超える場合は `TextTooLong` エラーを返す。
     /// - 文字数は Unicode のスカラー値の数で数える（バイト数ではない）。
     pub fn translate(&mut self, text: &str) -> Result<Option<String>> {
+        self.translate_with_progress(text, |_| {})
+    }
+
+    /// 進捗通知を受け取りながらテキストを翻訳する。
+    pub fn translate_with_progress(
+        &mut self,
+        text: &str,
+        mut on_progress: impl FnMut(TranslationProgress),
+    ) -> Result<Option<String>> {
         let trimmed = text.trim();
         let len = trimmed.chars().count();
 
@@ -155,9 +192,12 @@ impl<T: Translate, C: Clock> TranslationService<T, C> {
             });
         }
 
-        let output =
-            self.backend
-                .translate(&self.config.source_lang, &self.config.target_lang, trimmed)?;
+        let output = self.backend.translate_with_progress(
+            &self.config.source_lang,
+            &self.config.target_lang,
+            trimmed,
+            &mut on_progress,
+        )?;
         self.last_used = Some(self.clock.now());
         Ok(Some(output))
     }
